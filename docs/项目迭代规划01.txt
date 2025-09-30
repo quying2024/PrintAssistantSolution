@@ -1,0 +1,13 @@
+四、实现交付建议（迭代式里程碑）
+
+建议将项目分为 4 个迭代（每个迭代交付可演示的产物）：
+
+迭代 0（架构与骨架）：建立 solution，Generic Host + DI 框架，IFileMonitor、IPrintQueue、ITrayIconService 接口与最小实现。单元测试框架与 CI（静态分析）。
+
+迭代 1（文件监控 + 队列 + 简单打印）：实现防抖与任务入队；实现 PrintProcessorService 的基本循环；采用 Mock IPrintService 做打印模拟；UI 托盘与 SettingsForm。可演示从放文件到任务入队及托盘提示。
+
+迭代 2（转换与合并）：接入 Syncfusion 转换器实现（Word/Excel/Image -> PDF）、实现边转换边合并、PageCount 正确计算、归档。做内存/负载基线测试。
+
+迭代 3（健壮性与发布）：完善打印后端（IronPDF 或 Spooler），错误与重试策略，日志保留策略，权限/安装测试，编写完整单元/集成测试，打包与安装程序（确保 appsettings 可覆盖）。
+
+文档本身已经非常适合按上述迭代拆分执行。
