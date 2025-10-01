@@ -380,6 +380,7 @@ tmp/
 # User settings
 appsettings.Development.json
 appsettings.Production.json
+src/PrintAssistant/appsettings.Secret.json
 
 # Syncfusion license files (if any)
 SyncfusionLicense.txt

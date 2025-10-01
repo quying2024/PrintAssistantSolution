@@ -22,15 +22,13 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        // =================================================================================
-        // 重要：请在此处填写 Syncfusion 社区许可证密钥
-        // 访问 https://www.syncfusion.com/products/communitylicense 获取您的密钥
-        // =================================================================================
-        Syncfusion.Licensing.SyncfusionLicenseProvider.RegisterLicense("YOUR_SYNCFUSION_LICENSE_KEY");
-
         ApplicationConfiguration.Initialize();
 
         var builder = Host.CreateApplicationBuilder(args);
+
+        // 尝试加载 appsettings.Secret.json，以便从中读取 Syncfusion 许可证
+        builder.Configuration.AddJsonFile("appsettings.Secret.json", optional: true, reloadOnChange: true);
+        RegisterSyncfusionLicense(builder.Configuration);
 
         // 配置 Serilog
         builder.Services.AddSerilog((services, loggerConfiguration) =>
@@ -67,6 +65,21 @@ internal static class Program
         services.AddSingleton<IPdfMerger, PdfMerger>();
 
         services.AddHostedService<PrintProcessorService>();
+    }
+
+    private static void RegisterSyncfusionLicense(IConfiguration configuration)
+    {
+        var licenseKeys = configuration.GetSection("Syncfusion:DocumentSdk:LicenseKeys").Get<string[]>();
+        if (licenseKeys != null && licenseKeys.Length > 0)
+        {
+            foreach (var key in licenseKeys)
+            {
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    Syncfusion.Licensing.SyncfusionLicenseProvider.RegisterLicense(key);
+                }
+            }
+        }
     }
 }
 
