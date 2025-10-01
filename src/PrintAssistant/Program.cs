@@ -63,7 +63,7 @@ internal static class Program
         services.AddSingleton<IFileArchiver, FileArchiver>();
         services.AddSingleton<IFileMonitor, FileMonitorService>();
         services.AddSingleton<ITrayIconService, TrayIconService>();
-        services.AddSingleton<IPrintService, PrintService>();
+        services.AddSingleton<IPrintService, MockPrintService>();
         services.AddSingleton<IPdfMerger, PdfMerger>();
 
         services.AddHostedService<PrintProcessorService>();
