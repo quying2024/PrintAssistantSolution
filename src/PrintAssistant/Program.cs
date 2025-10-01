@@ -6,8 +6,6 @@ using Microsoft.Extensions.Hosting;
 using PrintAssistant.Configuration;
 using PrintAssistant.Services;
 using PrintAssistant.Services.Abstractions;
-using PrintAssistant.Services.Converters;
-using PrintAssistant.UI;
 using Serilog;
 using System.IO.Abstractions;
 
@@ -61,23 +59,7 @@ internal static class Program
         services.AddSingleton<IFileSystem, FileSystem>();
 
         // 核心服务注册
-        services.AddSingleton<IPrintQueue, PrintQueueService>();
-        services.AddSingleton<IFileMonitor, FileMonitorService>();
-        services.AddSingleton<ITrayIconService, TrayIconService>();
-        services.AddHostedService<PrintProcessorService>();
-
-        services.AddSingleton<IFileConverterFactory, FileConverterFactory>();
-        services.AddSingleton<IPrintService, PrintService>();
         services.AddSingleton<IFileArchiver, FileArchiver>();
-        services.AddSingleton<IPdfMerger, PdfMerger>();
-
-        services.AddTransient<WordToPdfConverter>();
-        services.AddTransient<ExcelToPdfConverter>();
-        services.AddTransient<ImageToPdfConverter>();
-        services.AddTransient<ICoverPageGenerator, CoverPageGenerator>();
-
-        services.AddTransient<SettingsForm>();
-        services.AddTransient<PrinterSelectionForm>();
     }
 }
 
