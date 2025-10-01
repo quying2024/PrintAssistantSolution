@@ -841,9 +841,264 @@ public class TrayIconService : ITrayIconService, IDisposable
 
 *(由于代码过长，此处省略 TrayIconService.cs 的完整实现，但它将包含 NotifyIcon 的创建、菜单管理、跨线程更新Tooltip等逻辑。)*
 
-#### **UI/ (所有窗体文件)**
+#### **UI/PrinterSelectionForm.cs**
 
-*(由于UI代码（尤其是 Designer.cs 文件）非常冗长且由IDE自动生成，此处仅提供关键逻辑部分的伪代码。实际项目中，您可以使用Visual Studio的窗体设计器来创建这些界面。)*
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Drawing.Printing;
+using System.Linq;
+using System.Windows.Forms;
+
+namespace PrintAssistant.UI;
+
+public partial class PrinterSelectionForm : Form
+{
+    public string? SelectedPrinter { get; private set; }
+    public int PrintCopies { get; private set; }
+
+    private readonly List<string> _excludedPrinters;
+
+    public PrinterSelectionForm(List<string> excludedPrinters)
+    {
+        InitializeComponent();
+        _excludedPrinters = excludedPrinters;
+        TopMost = true;
+    }
+
+    private void PrinterSelectionForm_Load(object sender, EventArgs e) => LoadPrinters();
+
+    private void LoadPrinters()
+    {
+        string defaultPrinter = new PrinterSettings().PrinterName;
+
+        foreach (string printer in PrinterSettings.InstalledPrinters.Cast<string>())
+        {
+            if (!_excludedPrinters.Contains(printer, StringComparer.OrdinalIgnoreCase))
+            {
+                cmbPrinters.Items.Add(printer);
+            }
+        }
+
+        if (cmbPrinters.Items.Contains(defaultPrinter))
+        {
+            cmbPrinters.SelectedItem = defaultPrinter;
+        }
+        else if (cmbPrinters.Items.Count > 0)
+        {
+            cmbPrinters.SelectedIndex = 0;
+        }
+    }
+
+    private void btnOK_Click(object sender, EventArgs e)
+    {
+        if (cmbPrinters.SelectedItem == null)
+        {
+            MessageBox.Show("请选择一个打印机。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        SelectedPrinter = cmbPrinters.SelectedItem.ToString();
+        PrintCopies = (int)numCopies.Value;
+        DialogResult = DialogResult.OK;
+        Close();
+    }
+
+    private void btnCancel_Click(object sender, EventArgs e)
+    {
+        DialogResult = DialogResult.Cancel;
+        Close();
+    }
+}
+```
+
+#### **UI/PrinterSelectionForm.Designer.cs**
+
+```csharp
+using System.Drawing;
+using System.Windows.Forms;
+
+namespace PrintAssistant.UI
+{
+    partial class PrinterSelectionForm
+    {
+        private System.ComponentModel.IContainer components = null;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && (components != null))
+            {
+                components.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        private void InitializeComponent()
+        {
+            lblPrinter = new Label();
+            cmbPrinters = new ComboBox();
+            lblCopies = new Label();
+            numCopies = new NumericUpDown();
+            btnOK = new Button();
+            btnCancel = new Button();
+            ((System.ComponentModel.ISupportInitialize)numCopies).BeginInit();
+            SuspendLayout();
+            // ... Designer generated code ...
+            Load += PrinterSelectionForm_Load;
+            ((System.ComponentModel.ISupportInitialize)numCopies).EndInit();
+            ResumeLayout(false);
+            PerformLayout();
+        }
+
+        private Label lblPrinter;
+        private ComboBox cmbPrinters;
+        private Label lblCopies;
+        private NumericUpDown numCopies;
+        private Button btnOK;
+        private Button btnCancel;
+    }
+}
+```
+
+#### **UI/SettingsForm.cs**
+
+```csharp
+using Microsoft.Extensions.Options;
+using PrintAssistant.Configuration;
+using System;
+using System.Drawing.Printing;
+using System.IO.Abstractions;
+using System.Linq;
+using System.Text.Json;
+using System.Windows.Forms;
+
+namespace PrintAssistant.UI;
+
+public partial class SettingsForm : Form
+{
+    private readonly AppSettings _settings;
+    private readonly IFileSystem _fileSystem;
+    private readonly string _appSettingsPath;
+
+    public SettingsForm(IOptions<AppSettings> appSettings, IFileSystem fileSystem)
+    {
+        InitializeComponent();
+        _settings = appSettings.Value;
+        _fileSystem = fileSystem;
+        _appSettingsPath = _fileSystem.Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    }
+
+    private void SettingsForm_Load(object sender, EventArgs e) => LoadSettings();
+
+    private void LoadSettings()
+    {
+        txtMonitorPath.Text = _settings.Monitoring.Path;
+        numDebounceInterval.Value = _settings.Monitoring.DebounceIntervalMilliseconds;
+        numMaxFileSize.Value = _settings.Monitoring.MaxFileSizeMegaBytes;
+        chkGenerateCoverPage.Checked = _settings.Printing.GenerateCoverPage;
+        LoadPrintersForExclusion();
+        txtLogPath.Text = _settings.Logging.Path;
+    }
+
+    private void LoadPrintersForExclusion()
+    {
+        clbExcludedPrinters.Items.Clear();
+        foreach (string printer in PrinterSettings.InstalledPrinters.Cast<string>())
+        {
+            bool isExcluded = _settings.Printing.ExcludedPrinters.Contains(printer, StringComparer.OrdinalIgnoreCase);
+            clbExcludedPrinters.Items.Add(printer, isExcluded);
+        }
+    }
+
+    private void btnBrowseMonitorPath_Click(object sender, EventArgs e)
+    {
+        using var dialog = new FolderBrowserDialog { Description = "请选择要监控的文件夹" };
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            txtMonitorPath.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void btnBrowseLogPath_Click(object sender, EventArgs e)
+    {
+        using var dialog = new FolderBrowserDialog { Description = "请选择日志文件存储位置" };
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            txtLogPath.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void btnSave_Click(object sender, EventArgs e)
+    {
+        SaveChanges();
+        MessageBox.Show("设置已保存。部分设置可能需要重启应用才能生效。", "保存成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        Close();
+    }
+
+    private void SaveChanges()
+    {
+        _settings.Monitoring.Path = txtMonitorPath.Text;
+        _settings.Monitoring.DebounceIntervalMilliseconds = (int)numDebounceInterval.Value;
+        _settings.Monitoring.MaxFileSizeMegaBytes = (long)numMaxFileSize.Value;
+        _settings.Printing.GenerateCoverPage = chkGenerateCoverPage.Checked;
+        _settings.Printing.ExcludedPrinters.Clear();
+        foreach (var item in clbExcludedPrinters.CheckedItems)
+        {
+            _settings.Printing.ExcludedPrinters.Add(item.ToString()!);
+        }
+        _settings.Logging.Path = txtLogPath.Text;
+
+        var jsonString = _fileSystem.File.ReadAllText(_appSettingsPath);
+        var jsonDocument = JsonDocument.Parse(jsonString, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip });
+        var root = jsonDocument.RootElement.Clone();
+        var appSettingsJson = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
+        var newAppSettingsNode = JsonDocument.Parse(appSettingsJson).RootElement;
+
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
+        {
+            writer.WriteStartObject();
+            foreach (var property in root.EnumerateObject())
+            {
+                if (property.NameEquals("AppSettings"))
+                {
+                    writer.WritePropertyName("AppSettings");
+                    newAppSettingsNode.WriteTo(writer);
+                }
+                else
+                {
+                    property.WriteTo(writer);
+                }
+            }
+            writer.WriteEndObject();
+        }
+
+        var newJsonString = System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        _fileSystem.File.WriteAllText(_appSettingsPath, newJsonString);
+    }
+
+    private void btnCancel_Click(object sender, EventArgs e) => Close();
+}
+```
+
+#### **UI/SettingsForm.Designer.cs**
+
+```csharp
+using System.Drawing;
+using System.Windows.Forms;
+
+namespace PrintAssistant.UI
+{
+    partial class SettingsForm
+    {
+        private System.ComponentModel.IContainer components = null;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && (components != null))
+            {
+                components.Dispose();
+            }
 
 * **PrinterSelectionForm.cs**:  
   * 在构造函数中接收打印机列表和排除列表。  
