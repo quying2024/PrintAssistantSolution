@@ -5,27 +5,13 @@ using System.IO.Abstractions;
 
 namespace PrintAssistant.Services;
 
-/// <summary>
-/// 负责将已处理文件归档并处理不支持的文件类型。
-/// </summary>
-public class FileArchiver : IFileArchiver
+public class FileArchiver(IFileSystem fileSystem, IOptions<AppSettings> appSettings) : IFileArchiver
 {
-    private readonly IFileSystem _fileSystem;
-    private readonly AppSettings _settings;
-
-    public FileArchiver(IFileSystem fileSystem, IOptions<AppSettings> appSettings)
-    {
-        _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
-        _settings = appSettings?.Value ?? throw new ArgumentNullException(nameof(appSettings));
-    }
+    private readonly IFileSystem _fileSystem = fileSystem;
+    private readonly AppSettings _settings = appSettings.Value;
 
     public Task ArchiveFilesAsync(IEnumerable<string> sourceFiles, DateTime jobCreationTime)
     {
-        if (sourceFiles == null)
-        {
-            throw new ArgumentNullException(nameof(sourceFiles));
-        }
-
         var monitorPath = GetMonitorPath();
         var archiveSubDirName = string.Format(_settings.Archiving.SubdirectoryFormat, jobCreationTime);
         var archivePath = _fileSystem.Path.Combine(monitorPath, archiveSubDirName);
@@ -34,11 +20,6 @@ public class FileArchiver : IFileArchiver
 
         foreach (var sourceFile in sourceFiles)
         {
-            if (sourceFile is null)
-            {
-                continue;
-            }
-
             if (_fileSystem.File.Exists(sourceFile))
             {
                 var destFileName = _fileSystem.Path.Combine(archivePath, _fileSystem.Path.GetFileName(sourceFile));
@@ -51,11 +32,6 @@ public class FileArchiver : IFileArchiver
 
     public void MoveUnsupportedFile(string sourceFile)
     {
-        if (string.IsNullOrWhiteSpace(sourceFile))
-        {
-            throw new ArgumentException("Source file path cannot be null or whitespace.", nameof(sourceFile));
-        }
-
         var unsupportedPath = GetUnsupportedFilesPath();
         _fileSystem.Directory.CreateDirectory(unsupportedPath);
 

@@ -1,14 +1,9 @@
 ﻿namespace PrintAssistant.Configuration;
 
-// 以下是与 appsettings.json 中各个部分对应的强类型配置类 (POCO)。
-// 使用强类型配置可以提高代码的可读性、类型安全性和可维护性。
-
 public class MonitorSettings
 {
     public string? Path { get; set; }
-
     public int DebounceIntervalMilliseconds { get; set; } = 2500;
-
     public long MaxFileSizeMegaBytes { get; set; } = 100;
 }
 
@@ -20,7 +15,6 @@ public class UnsupportedFileSettings
 public class PrintSettings
 {
     public List<string> ExcludedPrinters { get; set; } = new();
-
     public bool GenerateCoverPage { get; set; } = true;
 }
 

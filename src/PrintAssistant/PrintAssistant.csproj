@@ -23,7 +23,7 @@
     <PackageReference Include="Syncfusion.DocIO.Net.Core" Version="*" />
     <PackageReference Include="Syncfusion.DocIORenderer.Net.Core" Version="*" />
     <PackageReference Include="Syncfusion.Pdf.Net.Core" Version="*" />
-    <PackageReference Include="Syncfusion.PdfToImageConverter.Net.Core" Version="*" />
+    <PackageReference Include="Syncfusion.PdfToImageConverter.Net" Version="*" />
     <PackageReference Include="Syncfusion.XlsIO.Net.Core" Version="*" />
     <PackageReference Include="Syncfusion.XlsIORenderer.Net.Core" Version="*" />
   </ItemGroup>

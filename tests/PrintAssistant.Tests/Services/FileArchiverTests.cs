@@ -11,7 +11,6 @@ public class FileArchiverTests
     [Fact]
     public async Task ArchiveFilesAsync_ShouldMoveFilesToTimestampedDirectory()
     {
-        // Arrange
         var mockFileSystem = new MockFileSystem();
         var monitorPath = @"C:\PrintJobs";
         var sourceFilePath = @"C:\PrintJobs\test.txt";
@@ -27,10 +26,8 @@ public class FileArchiverTests
         var archiver = new FileArchiver(mockFileSystem, mockOptions);
         var jobTime = new DateTime(2023, 10, 27);
 
-        // Act
         await archiver.ArchiveFilesAsync(new[] { sourceFilePath }, jobTime);
 
-        // Assert
         var expectedArchivePath = @"C:\PrintJobs\Processed_20231027\test.txt";
         Assert.False(mockFileSystem.FileExists(sourceFilePath));
         Assert.True(mockFileSystem.FileExists(expectedArchivePath));
