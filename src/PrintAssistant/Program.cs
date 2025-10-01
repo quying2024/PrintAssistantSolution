@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using PrintAssistant.Configuration;
 using PrintAssistant.Services;
 using PrintAssistant.Services.Abstractions;
+using PrintAssistant.Services.Converters;
 using Serilog;
 using System.IO.Abstractions;
 
@@ -63,6 +64,12 @@ internal static class Program
         services.AddSingleton<ITrayIconService, TrayIconService>();
         services.AddSingleton<IPrintService, MockPrintService>();
         services.AddSingleton<IPdfMerger, PdfMerger>();
+        services.AddSingleton<IFileConverterFactory, FileConverterFactory>();
+        services.AddSingleton<ICoverPageGenerator, CoverPageGenerator>();
+
+        services.AddTransient<WordToPdfConverter>();
+        services.AddTransient<ExcelToPdfConverter>();
+        services.AddTransient<ImageToPdfConverter>();
 
         services.AddHostedService<PrintProcessorService>();
     }

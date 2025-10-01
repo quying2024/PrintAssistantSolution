@@ -10,7 +10,7 @@ public class FileArchiver(IFileSystem fileSystem, IOptions<AppSettings> appSetti
     private readonly IFileSystem _fileSystem = fileSystem;
     private readonly AppSettings _settings = appSettings.Value;
 
-    public Task ArchiveFilesAsync(IEnumerable<string> sourceFiles, DateTime jobCreationTime)
+    public async Task<string> ArchiveFilesAsync(IEnumerable<string> sourceFiles, DateTime jobCreationTime, Stream? mergedPdfStream = null, string? mergedFileName = null)
     {
         var monitorPath = GetMonitorPath();
         var archiveSubDirName = string.Format(_settings.Archiving.SubdirectoryFormat, jobCreationTime);
@@ -23,11 +23,26 @@ public class FileArchiver(IFileSystem fileSystem, IOptions<AppSettings> appSetti
             if (_fileSystem.File.Exists(sourceFile))
             {
                 var destFileName = _fileSystem.Path.Combine(archivePath, _fileSystem.Path.GetFileName(sourceFile));
+                if (_fileSystem.File.Exists(destFileName))
+                {
+                    _fileSystem.File.Delete(destFileName);
+                }
                 _fileSystem.File.Move(sourceFile, destFileName);
             }
         }
 
-        return Task.CompletedTask;
+        if (mergedPdfStream != null)
+        {
+            mergedPdfStream.Position = 0;
+            var targetName = string.IsNullOrWhiteSpace(mergedFileName)
+                ? $"Merged_{jobCreationTime:yyyyMMdd_HHmmss}.pdf"
+                : mergedFileName!;
+            var mergedPath = _fileSystem.Path.Combine(archivePath, targetName);
+            await using var fileStream = _fileSystem.File.Create(mergedPath);
+            await mergedPdfStream.CopyToAsync(fileStream);
+        }
+
+        return archivePath;
     }
 
     public void MoveUnsupportedFile(string sourceFile)

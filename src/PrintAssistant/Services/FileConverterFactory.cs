@@ -13,7 +13,7 @@ public class FileConverterFactory(IServiceProvider serviceProvider) : IFileConve
         return extension switch
         {
             ".doc" or ".docx" => _serviceProvider.GetService(typeof(WordToPdfConverter)) as IFileConverter,
-            ".xlsx" => _serviceProvider.GetService(typeof(ExcelToPdfConverter)) as IFileConverter,
+            ".xls" or ".xlsx" or ".xlsm" => _serviceProvider.GetService(typeof(ExcelToPdfConverter)) as IFileConverter,
             ".jpg" or ".jpeg" or ".png" or ".bmp" => _serviceProvider.GetService(typeof(ImageToPdfConverter)) as IFileConverter,
             ".pdf" => new PassthroughConverter(),
             _ => null,

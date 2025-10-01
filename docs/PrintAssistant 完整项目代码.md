@@ -149,102 +149,79 @@ JSON
 
 #### **Program.cs**
 
-C\#
-
+```csharp
+using System;
+using System.Windows.Forms;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;  
 using Microsoft.Extensions.Hosting;  
 using PrintAssistant.Configuration;  
 using PrintAssistant.Services;  
 using PrintAssistant.Services.Abstractions;  
-using PrintAssistant.Services.Converters;  
-using PrintAssistant.UI;  
 using Serilog;  
 using System.IO.Abstractions;
 
 namespace PrintAssistant;
 
-static class Program  
-{  
-    /// \<summary\>  
-    ///  应用程序的主入口点。  
-    /// \</summary\>  
-     
-    static void Main(string args)  
-    {  
-        // \=================================================================================  
-        // 重要：请在此处填入您的 Syncfusion 社区许可密钥  
-        // Get your key from https://www.syncfusion.com/products/communitylicense  
-        // \=================================================================================  
-        Syncfusion.Licensing.SyncfusionLicenseProvider.RegisterLicense("YOUR\_SYNCFUSION\_LICENSE\_KEY");
-
+internal static class Program
+{
+    [STAThread]
+    private static void Main(string[] args)
+    {
         ApplicationConfiguration.Initialize();
 
-        var builder \= Host.CreateApplicationBuilder(args);
+        var builder = Host.CreateApplicationBuilder(args);
 
-        // 配置 Serilog 日志记录器  
-        builder.Services.AddSerilog((services, lc) \=\> lc  
-          .ReadFrom.Configuration(builder.Configuration));
+        builder.Configuration.AddJsonFile("appsettings.Secret.json", optional: true, reloadOnChange: true);
+        RegisterSyncfusionLicense(builder.Configuration);
 
-        // 配置和注册所有服务  
+        builder.Services.AddSerilog((services, loggerConfiguration) =>
+            loggerConfiguration.ReadFrom.Configuration(builder.Configuration));
+
         ConfigureServices(builder.Services, builder.Configuration);
 
-        var host \= builder.Build();
+        using var host = builder.Build();
 
-        // 启动应用程序的托管服务，这将初始化托盘图标和后台任务  
-        // Application.Run() 会阻塞主线程，直到最后一个窗体关闭，  
-        // 这对于无主窗体的托盘应用是理想的。  
-        // 我们的 IHostedService 将管理应用的实际生命周期。  
-        \_ \= host.Services.GetRequiredService\<ITrayIconService\>(); // 确保托盘服务被创建
+        _ = host.Services.GetRequiredService<ITrayIconService>();
 
-        // 启动主机，这将调用所有IHostedService的StartAsync方法  
         host.Start();
 
         Application.Run();
 
-        // 当Application.Exit()被调用时，优雅地停止主机  
         host.StopAsync().GetAwaiter().GetResult();  
     }
 
-    /// \<summary\>  
-    /// 配置所有服务的依赖注入。  
-    /// \</summary\>  
-    /// \<param name="services"\>服务集合\</param\>  
-    /// \<param name="configuration"\>应用程序配置\</param\>  
     private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)  
     {  
-        // 注册强类型配置选项  
-        services.Configure\<AppSettings\>(configuration.GetSection("AppSettings"));
+        services.Configure<AppSettings>(configuration.GetSection("AppSettings"));
+        services.AddSingleton<IFileSystem, FileSystem>();
+        services.AddSingleton<IPrintQueue, PrintQueueService>();
+        services.AddSingleton<IFileArchiver, FileArchiver>();
+        services.AddSingleton<IFileMonitor, FileMonitorService>();
+        services.AddSingleton<ITrayIconService, TrayIconService>();
+        services.AddSingleton<IPrintService, MockPrintService>();
+        services.AddSingleton<IPdfMerger, PdfMerger>();
+        services.AddHostedService<PrintProcessorService>();
+    }
 
-        // 注册文件系统抽象，使其可在单元测试中被模拟  
-        services.AddSingleton\<IFileSystem, FileSystem\>();
+    private static void RegisterSyncfusionLicense(IConfiguration configuration)
+    {
+        var licenseKeys = configuration.GetSection("Syncfusion:DocumentSdk:LicenseKeys").Get<string[]>();
+        if (licenseKeys == null || licenseKeys.Length == 0)
+        {
+            return;
+        }
 
-        // 注册核心后台服务  
-        // IPrintQueue 作为单例，确保整个应用只有一个打印队列  
-        services.AddSingleton\<IPrintQueue, PrintQueueService\>();  
-        // IFileMonitor 作为单例，确保只有一个文件系统监视器实例  
-        services.AddSingleton\<IFileMonitor, FileMonitorService\>();  
-        // ITrayIconService 作为单例，管理唯一的系统托盘图标  
-        services.AddSingleton\<ITrayIconService, TrayIconService\>();  
-        // PrintProcessorService 是一个托管服务，负责消费打印队列，由通用主机管理其生命周期  
-        services.AddHostedService\<PrintProcessorService\>();
-
-        // 注册功能性服务  
-        services.AddSingleton\<IFileConverterFactory, FileConverterFactory\>();  
-        services.AddSingleton\<IPrintService, PrintService\>();  
-        services.AddSingleton\<IFileArchiver, FileArchiver\>();  
-        services.AddSingleton\<IPdfMerger, PdfMerger\>();  
-          
-        // 转换器和封面页生成器是无状态的，注册为瞬态  
-        services.AddTransient\<WordToPdfConverter\>();  
-        services.AddTransient\<ExcelToPdfConverter\>();  
-        services.AddTransient\<ImageToPdfConverter\>();  
-        services.AddTransient\<ICoverPageGenerator, CoverPageGenerator\>();
-
-        // 注册UI窗体为瞬态，每次请求时都创建新实例  
-        services.AddTransient\<SettingsForm\>();  
-        services.AddTransient\<PrinterSelectionForm\>();  
-    }  
+        foreach (var key in licenseKeys)
+        {
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                Syncfusion.Licensing.SyncfusionLicenseProvider.RegisterLicense(key);
+            }
+        }
+    }
 }
+```
 
 #### **Assets/print\_icon.ico**
 
@@ -398,7 +375,7 @@ public interface ICoverPageGenerator { Task\<Stream\> GenerateCoverPageAsync(Pri
 
 // IFileArchiver.cs  
 namespace PrintAssistant.Services.Abstractions;  
-public interface IFileArchiver { Task ArchiveFilesAsync(IEnumerable\<string\> sourceFiles, DateTime jobCreationTime); void MoveUnsupportedFile(string sourceFile); }
+public interface IFileArchiver { Task<string> ArchiveFilesAsync(IEnumerable<string> sourceFiles, DateTime jobCreationTime, Stream? mergedPdfStream = null, string? mergedFileName = null); void MoveUnsupportedFile(string sourceFile); }
 
 // IFileConverter.cs  
 namespace PrintAssistant.Services.Abstractions;  
@@ -540,65 +517,61 @@ public class WordToPdfConverter(IFileSystem fileSystem) : IFileConverter
 
 C\#
 
+using System.Globalization;
 using PrintAssistant.Core;  
 using PrintAssistant.Services.Abstractions;  
-using Syncfusion.Drawing;  
 using Syncfusion.Pdf;  
 using Syncfusion.Pdf.Graphics;  
-using Syncfusion.Pdf.Grid;
 
 namespace PrintAssistant.Services;
 
-/// \<summary\>  
-/// 负责为打印任务生成一个包含元数据信息的封面页。  
-/// \</summary\>  
 public class CoverPageGenerator : ICoverPageGenerator  
 {  
-    public Task\<Stream\> GenerateCoverPageAsync(PrintJob job)  
-    {  
-        using var document \= new PdfDocument();  
-        var page \= document.Pages.Add();  
-        var graphics \= page.Graphics;  
-        var font \= new PdfStandardFont(PdfFontFamily.Helvetica, 12);  
-        var titleFont \= new PdfStandardFont(PdfFontFamily.Helvetica, 18, PdfFontStyle.Bold);
+    public Task<Stream> GenerateCoverPageAsync(PrintJob job)
+    {
+        if (job == null)
+        {
+            throw new ArgumentNullException(nameof(job));
+        }
 
-        float yPos \= 20;
+        var document = new PdfDocument();
+        var page = document.Pages.Add();
+        var graphics = page.Graphics;
 
-        // 绘制标题  
-        graphics.DrawString("打印任务清单", titleFont, PdfBrushes.Black, new PointF(20, yPos));  
-        yPos \+= 40;
+        var titleFont = new PdfStandardFont(PdfFontFamily.Helvetica, 20, PdfFontStyle.Bold);
+        var bodyFont = new PdfStandardFont(PdfFontFamily.Helvetica, 12);
 
-        // 绘制任务元数据  
-        graphics.DrawString($"任务ID: {job.JobId}", font, PdfBrushes.Black, new PointF(20, yPos));  
-        yPos \+= 20;  
-        graphics.DrawString($"打印时间: {job.CreationTime:yyyy-MM-dd HH:mm:ss}", font, PdfBrushes.Black, new PointF(20, yPos));  
-        yPos \+= 40;
+        var culture = CultureInfo.CurrentCulture;
 
-        // 创建一个表格来显示文件列表  
-        var pdfGrid \= new PdfGrid();  
-        pdfGrid.Columns.Add(2);  
-        pdfGrid.Headers.Add(1);
+        float currentY = 40;
+        graphics.DrawString("打印任务封面", titleFont, PdfBrushes.Black, new Syncfusion.Drawing.PointF(40, currentY));
+        currentY += 40;
 
-        var header \= pdfGrid.Headers;  
-        header.Cells.Value \= "文件名";  
-        header.Cells.\[1\]Value \= "页数 (估算)";  
-        header.Style.Font \= new PdfStandardFont(PdfFontFamily.Helvetica, 10, PdfFontStyle.Bold);
+        graphics.DrawString($"任务编号: {job.JobId}", bodyFont, PdfBrushes.Black, new Syncfusion.Drawing.PointF(40, currentY));
+        currentY += 25;
+
+        graphics.DrawString($"创建时间: {job.CreationTime.ToString("f", culture)}", bodyFont, PdfBrushes.Black, new Syncfusion.Drawing.PointF(40, currentY));
+        currentY += 25;
+
+        graphics.DrawString($"文件数量: {job.SourceFilePaths.Count}", bodyFont, PdfBrushes.Black, new Syncfusion.Drawing.PointF(40, currentY));
+        currentY += 25;
+
+        graphics.DrawString("文件列表:", bodyFont, PdfBrushes.Black, new Syncfusion.Drawing.PointF(40, currentY));
+        currentY += 20;
 
         foreach (var file in job.SourceFilePaths)  
         {  
-            var row \= pdfGrid.Rows.Add();  
-            row.Cells.Value \= Path.GetFileName(file);  
-            row.Cells.\[1\]Value \= "N/A"; // 页数在合并后才精确知道  
+            var name = Path.GetFileName(file);
+            graphics.DrawString($"- {name}", bodyFont, PdfBrushes.Black, new Syncfusion.Drawing.PointF(60, currentY));
+            currentY += 18;
         }
 
-        // 绘制表格  
-        pdfGrid.Draw(page, new PointF(20, yPos));
-
-        var stream \= new MemoryStream();  
+        var stream = new MemoryStream();
         document.Save(stream);  
-        stream.Position \= 0;
+        stream.Position = 0;
+        document.Close(true);
 
-        return Task.FromResult\<Stream\>(stream);  
+        return Task.FromResult<Stream>(stream);
     }  
 }
 
@@ -613,54 +586,66 @@ using System.IO.Abstractions;
 
 namespace PrintAssistant.Services;
 
-public class FileArchiver(IFileSystem fileSystem, IOptions\<AppSettings\> appSettings) : IFileArchiver  
-{  
-    private readonly IFileSystem \_fileSystem \= fileSystem;  
-    private readonly AppSettings \_settings \= appSettings.Value;
+public class FileArchiver(IFileSystem fileSystem, IOptions<AppSettings> appSettings) : IFileArchiver
+{
+    private readonly IFileSystem _fileSystem = fileSystem;
+    private readonly AppSettings _settings = appSettings.Value;
 
-    public Task ArchiveFilesAsync(IEnumerable\<string\> sourceFiles, DateTime jobCreationTime)  
-    {  
-        var monitorPath \= GetMonitorPath();  
-        var archiveSubDirName \= string.Format(\_settings.Archiving.SubdirectoryFormat, jobCreationTime);  
-        var archivePath \= \_fileSystem.Path.Combine(monitorPath, archiveSubDirName);
+    public async Task<string> ArchiveFilesAsync(IEnumerable<string> sourceFiles, DateTime jobCreationTime, Stream? mergedPdfStream = null, string? mergedFileName = null)
+    {
+        var monitorPath = GetMonitorPath();
+        var archiveSubDirName = string.Format(_settings.Archiving.SubdirectoryFormat, jobCreationTime);
+        var archivePath = _fileSystem.Path.Combine(monitorPath, archiveSubDirName);
 
-        \_fileSystem.Directory.CreateDirectory(archivePath);
+        _fileSystem.Directory.CreateDirectory(archivePath);
 
         foreach (var sourceFile in sourceFiles)  
         {  
-            if (\_fileSystem.File.Exists(sourceFile))  
-            {  
-                var destFileName \= \_fileSystem.Path.Combine(archivePath, \_fileSystem.Path.GetFileName(sourceFile));  
-                \_fileSystem.File.Move(sourceFile, destFileName);  
-            }  
-        }  
-        return Task.CompletedTask;  
+            if (_fileSystem.File.Exists(sourceFile))
+            {
+                var destFileName = _fileSystem.Path.Combine(archivePath, _fileSystem.Path.GetFileName(sourceFile));
+                _fileSystem.File.Copy(sourceFile, destFileName, overwrite: true);
+            }
+        }
+
+        if (mergedPdfStream != null)
+        {
+            mergedPdfStream.Position = 0;
+            var targetName = string.IsNullOrWhiteSpace(mergedFileName)
+                ? $"Merged_{jobCreationTime:yyyyMMdd_HHmmss}.pdf"
+                : mergedFileName!;
+            var mergedPath = _fileSystem.Path.Combine(archivePath, targetName);
+            await using var fileStream = _fileSystem.File.Create(mergedPath);
+            await mergedPdfStream.CopyToAsync(fileStream);
+        }
+
+        return archivePath;
     }
 
     public void MoveUnsupportedFile(string sourceFile)  
     {  
-        var unsupportedPath \= GetUnsupportedFilesPath();  
-        \_fileSystem.Directory.CreateDirectory(unsupportedPath);
+        var unsupportedPath = GetUnsupportedFilesPath();
+        _fileSystem.Directory.CreateDirectory(unsupportedPath);
 
-        if (\_fileSystem.File.Exists(sourceFile))  
+        if (_fileSystem.File.Exists(sourceFile))
         {  
-            var destFileName \= \_fileSystem.Path.Combine(unsupportedPath, \_fileSystem.Path.GetFileName(sourceFile));  
-            \_fileSystem.File.Move(sourceFile, destFileName);  
+            var destFileName = _fileSystem.Path.Combine(unsupportedPath, _fileSystem.Path.GetFileName(sourceFile));
+            _fileSystem.File.Move(sourceFile, destFileName);
         }  
     }
 
     private string GetMonitorPath()  
     {  
-        return\!string.IsNullOrEmpty(\_settings.Monitoring.Path)  
-          ? \_settings.Monitoring.Path  
-            : \_fileSystem.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "PrintJobs");  
+        return !string.IsNullOrEmpty(_settings.Monitoring.Path)
+            ? _settings.Monitoring.Path
+            : _fileSystem.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "PrintJobs");
     }
 
     private string GetUnsupportedFilesPath()  
     {  
-        return\!string.IsNullOrEmpty(\_settings.UnsupportedFiles.MoveToPath)  
-          ? \_settings.UnsupportedFiles.MoveToPath  
-            : \_fileSystem.Path.Combine(GetMonitorPath(), "Unsupported");  
+        return !string.IsNullOrEmpty(_settings.UnsupportedFiles.MoveToPath)
+            ? _settings.UnsupportedFiles.MoveToPath
+            : _fileSystem.Path.Combine(GetMonitorPath(), "Unsupported");
     }  
 }
 
@@ -675,34 +660,34 @@ namespace PrintAssistant.Services;
 
 public class FileConverterFactory(IServiceProvider serviceProvider) : IFileConverterFactory  
 {  
-    private readonly IServiceProvider \_serviceProvider \= serviceProvider;
+    private readonly IServiceProvider _serviceProvider = serviceProvider;
 
     public IFileConverter? GetConverter(string filePath)  
     {  
-        var extension \= Path.GetExtension(filePath).ToLowerInvariant();  
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();  
         return extension switch  
         {  
-            ".doc" or ".docx" \=\> \_serviceProvider.GetService(typeof(WordToPdfConverter)) as IFileConverter,  
-            ".xlsx" \=\> \_serviceProvider.GetService(typeof(ExcelToPdfConverter)) as IFileConverter,  
-            ".jpg" or ".jpeg" or ".png" or ".bmp" \=\> \_serviceProvider.GetService(typeof(ImageToPdfConverter)) as IFileConverter,  
-            ".pdf" \=\> new PassthroughConverter(), // 对于PDF文件，我们不需要转换  
-            \_ \=\> null,  
+            ".doc" or ".docx" => _serviceProvider.GetService(typeof(WordToPdfConverter)) as IFileConverter,  
+            ".xls" or ".xlsx" or ".xlsm" => _serviceProvider.GetService(typeof(ExcelToPdfConverter)) as IFileConverter,  
+            ".jpg" or ".jpeg" or ".png" or ".bmp" => _serviceProvider.GetService(typeof(ImageToPdfConverter)) as IFileConverter,  
+            ".pdf" => new PassthroughConverter(), // 对于PDF文件，我们不需要转换  
+            _ => null,  
         };  
     }
 
-    /// \<summary\>  
+    /// <summary>  
     /// 一个特殊的“转换器”，用于处理已经是PDF的文件。它只是简单地将源文件流复制出来。  
-    /// \</summary\>  
+    /// </summary>  
     private class PassthroughConverter : IFileConverter  
     {  
-        public async Task\<Stream\> ConvertToPdfAsync(string sourceFilePath)  
+        public async Task<Stream> ConvertToPdfAsync(string sourceFilePath)  
         {  
-            var memoryStream \= new MemoryStream();  
-            await using (var fileStream \= new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read))  
+            var memoryStream = new MemoryStream();  
+            await using (var fileStream = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read))  
             {  
                 await fileStream.CopyToAsync(memoryStream);  
             }  
-            memoryStream.Position \= 0;  
+            memoryStream.Position = 0;  
             return memoryStream;  
         }  
     }  
@@ -710,25 +695,264 @@ public class FileConverterFactory(IServiceProvider serviceProvider) : IFileConve
 
 #### **Services/FileMonitorService.cs**
 
-C\#
-
+```csharp
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Timers;
 using Microsoft.Extensions.Logging;  
 using Microsoft.Extensions.Options;  
 using PrintAssistant.Configuration;  
 using PrintAssistant.Core;  
 using PrintAssistant.Services.Abstractions;  
-using System.Collections.Concurrent;  
 using System.IO.Abstractions;  
-using Timer \= System.Timers.Timer;
 
-namespace PrintAssistant.Services;
-
+namespace PrintAssistant.Services
+{
 public class FileMonitorService : IFileMonitor, IDisposable  
 {  
-    //... (实现代码)  
-}
+        private readonly IFileSystem _fileSystem;
+        private readonly ILogger<FileMonitorService> _logger;
+        private readonly MonitorSettings _settings;
 
-*(由于代码过长，此处省略 FileMonitorService.cs 的完整实现，但它将包含 FileSystemWatcher、防抖计时器和文件队列的逻辑。)*
+        private readonly HashSet<string> _pendingFiles = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _syncRoot = new();
+
+        private FileSystemWatcher? _watcher;
+        private System.Timers.Timer? _debounceTimer;
+        private string _monitorPath = string.Empty;
+        private bool _disposed;
+
+        public event Action<PrintJob>? JobDetected;
+
+        public FileMonitorService(
+            IOptions<AppSettings> appSettings,
+            IFileSystem fileSystem,
+            ILogger<FileMonitorService> logger)
+        {
+            if (appSettings == null) throw new ArgumentNullException(nameof(appSettings));
+
+            _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _settings = appSettings.Value.Monitoring ?? new MonitorSettings();
+        }
+
+        public void StartMonitoring()
+        {
+            ThrowIfDisposed();
+
+            if (_watcher != null)
+            {
+                return;
+            }
+
+            _monitorPath = DetermineMonitorPath();
+            _fileSystem.Directory.CreateDirectory(_monitorPath);
+
+            _debounceTimer = new System.Timers.Timer(_settings.DebounceIntervalMilliseconds)
+            {
+                AutoReset = false,
+            };
+            _debounceTimer.Elapsed += (_, _) => FlushPendingFiles();
+
+            _watcher = CreateWatcher(_monitorPath);
+            _watcher.Created += OnWatcherEvent;
+            _watcher.Changed += OnWatcherEvent;
+            _watcher.Renamed += OnWatcherRenamed;
+            _watcher.Error += OnWatcherError;
+            _watcher.EnableRaisingEvents = true;
+
+            _logger.LogInformation("File monitor started at {MonitorPath}", _monitorPath);
+        }
+
+        public void StopMonitoring()
+        {
+            if (_watcher == null)
+            {
+                return;
+            }
+
+            _watcher.EnableRaisingEvents = false;
+            _watcher.Created -= OnWatcherEvent;
+            _watcher.Changed -= OnWatcherEvent;
+            _watcher.Renamed -= OnWatcherRenamed;
+            _watcher.Error -= OnWatcherError;
+            _watcher.Dispose();
+            _watcher = null;
+
+            if (_debounceTimer != null)
+            {
+                _debounceTimer.Stop();
+                _debounceTimer.Dispose();
+                _debounceTimer = null;
+            }
+
+            lock (_syncRoot)
+            {
+                _pendingFiles.Clear();
+            }
+
+            _logger.LogInformation("File monitor stopped for {MonitorPath}", _monitorPath);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            StopMonitoring();
+            _disposed = true;
+        }
+
+        internal void HandleFileEvent(string? filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                return;
+            }
+
+            try
+            {
+                string fullPath = _fileSystem.Path.GetFullPath(filePath);
+
+                if (!_fileSystem.File.Exists(fullPath))
+                {
+                    return;
+                }
+
+                if (!IsWithinMonitoredDirectory(fullPath))
+                {
+                    return;
+                }
+
+                if (ExceedsSizeLimit(fullPath))
+                {
+                    _logger.LogWarning("Ignoring file '{FilePath}' because it exceeds the size limit of {Limit} MB.", fullPath, _settings.MaxFileSizeMegaBytes);
+                    return;
+                }
+
+                lock (_syncRoot)
+                {
+                    _pendingFiles.Add(fullPath);
+                }
+
+                RestartTimer();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error while handling file event for {FilePath}", filePath);
+            }
+        }
+
+        internal void FlushPendingFiles()
+        {
+            List<string> files;
+
+            lock (_syncRoot)
+            {
+                if (_pendingFiles.Count == 0)
+                {
+                    return;
+                }
+
+                files = _pendingFiles.ToList();
+                _pendingFiles.Clear();
+            }
+
+            files = files.Where(_fileSystem.File.Exists).ToList();
+            if (files.Count == 0)
+            {
+                return;
+            }
+
+            var job = new PrintJob(files);
+            JobDetected?.Invoke(job);
+
+            _logger.LogInformation("Detected new print job {JobId} with {FileCount} files.", job.JobId, files.Count);
+        }
+
+        private void OnWatcherEvent(object sender, FileSystemEventArgs e) => HandleFileEvent(e.FullPath);
+
+        private void OnWatcherRenamed(object sender, RenamedEventArgs e) => HandleFileEvent(e.FullPath);
+
+        private void OnWatcherError(object sender, ErrorEventArgs e)
+        {
+            _logger.LogError(e.GetException(), "FileSystemWatcher encountered an error. Attempting to restart monitoring.");
+            StopMonitoring();
+            StartMonitoring();
+        }
+
+        private bool ExceedsSizeLimit(string path)
+        {
+            if (_settings.MaxFileSizeMegaBytes <= 0)
+            {
+                return false;
+            }
+
+            long sizeLimitBytes = _settings.MaxFileSizeMegaBytes * 1024L * 1024L;
+            var info = _fileSystem.FileInfo.New(path);
+            return info.Exists && info.Length > sizeLimitBytes;
+        }
+
+        private bool IsWithinMonitoredDirectory(string path)
+        {
+            if (string.IsNullOrWhiteSpace(_monitorPath))
+            {
+                return false;
+            }
+
+            var normalizedMonitor = _fileSystem.Path.GetFullPath(_monitorPath).TrimEnd(_fileSystem.Path.DirectorySeparatorChar);
+            var normalizedPath = _fileSystem.Path.GetFullPath(path);
+
+            return normalizedPath.StartsWith(normalizedMonitor + _fileSystem.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(normalizedPath, normalizedMonitor, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void RestartTimer()
+        {
+            if (_debounceTimer == null)
+            {
+                return;
+            }
+
+            _debounceTimer.Stop();
+            _debounceTimer.Start();
+        }
+
+        private string DetermineMonitorPath()
+        {
+            if (!string.IsNullOrWhiteSpace(_settings.Path))
+            {
+                return _settings.Path;
+            }
+
+            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            return _fileSystem.Path.Combine(desktop, "PrintJobs");
+        }
+
+        private FileSystemWatcher CreateWatcher(string path)
+        {
+            return new FileSystemWatcher(path)
+            {
+                IncludeSubdirectories = false,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
+                Filter = "*.*"
+            };
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(FileMonitorService));
+            }
+        }
+    }
+}
+```
 
 #### **Services/PdfMerger.cs**
 
@@ -742,70 +966,281 @@ namespace PrintAssistant.Services;
 
 public class PdfMerger : IPdfMerger  
 {  
-    public Task\<(Stream MergedPdfStream, int TotalPages)\> MergePdfsAsync(IEnumerable\<Stream\> pdfStreams)  
-    {  
-        using var finalDocument \= new PdfDocument();  
-          
-        // 使用 Syncfusion 的 Merge 方法合并所有流  
-        PdfDocumentBase.Merge(finalDocument, pdfStreams.ToArray());
+    public async Task<(Stream MergedPdfStream, int TotalPages)> MergePdfsAsync(IEnumerable<Stream> pdfStreams)
+    {
+        if (pdfStreams == null)
+        {
+            throw new ArgumentNullException(nameof(pdfStreams));
+        }
 
-        var mergedStream \= new MemoryStream();  
-        finalDocument.Save(mergedStream);  
-        mergedStream.Position \= 0;
+        var streams = pdfStreams.Where(stream => stream != null).ToList();
+        if (streams.Count == 0)
+        {
+            return (Stream.Null, 0);
+        }
 
-        int totalPages \= finalDocument.Pages.Count;
+        using var mergedDocument = new PdfDocument();
 
-        return Task.FromResult\<(Stream, int)\>((mergedStream, totalPages));  
+        foreach (var stream in streams)
+        {
+            stream.Position = 0;
+            using var loadedDocument = new PdfLoadedDocument(stream);
+            mergedDocument.Append(loadedDocument);
+        }
+
+        var resultStream = new MemoryStream();
+        mergedDocument.Save(resultStream);
+        await resultStream.FlushAsync().ConfigureAwait(false);
+        resultStream.Position = 0;
+
+        var totalPages = mergedDocument.Pages.Count;
+        mergedDocument.Close(true);
+
+        return (resultStream, totalPages);
     }  
 }
 
 #### **Services/PrintProcessorService.cs**
 
-C\#
-
-using Microsoft.Extensions.Hosting;  
-using Microsoft.Extensions.Logging;  
-using Microsoft.Extensions.Options;  
-using PrintAssistant.Configuration;  
-using PrintAssistant.Core;  
-using PrintAssistant.Services.Abstractions;  
-using PrintAssistant.UI;  
-using System.IO.Abstractions;
+```csharp
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using PrintAssistant.Configuration;
+using PrintAssistant.Core;
+using PrintAssistant.Services.Abstractions;
 
 namespace PrintAssistant.Services;
 
-public class PrintProcessorService : BackgroundService  
-{  
-    //... (实现代码)  
-}
+public class PrintProcessorService : BackgroundService
+{
+    private readonly ILogger<PrintProcessorService> _logger;
+    private readonly IPrintQueue _printQueue;
+    private readonly IFileMonitor _fileMonitor;
+    private readonly ITrayIconService _trayIconService;
+    private readonly IPrintService _printService;
+    private readonly IFileConverterFactory _fileConverterFactory;
+    private readonly IPdfMerger _pdfMerger;
+    private readonly IFileArchiver _fileArchiver;
+    private readonly ICoverPageGenerator _coverPageGenerator;
+    private readonly AppSettings _appSettings;
 
-*(由于代码过长，此处省略 PrintProcessorService.cs 的完整实现，但它将包含消费队列、调用转换、合并、打印、归档等核心处理管道逻辑。)*
+    private readonly ConcurrentDictionary<Guid, PrintJob> _recentJobs = new();
+
+    public PrintProcessorService(
+        ILogger<PrintProcessorService> logger,
+        IPrintQueue printQueue,
+        IFileMonitor fileMonitor,
+        ITrayIconService trayIconService,
+        IPrintService printService,
+        IFileConverterFactory fileConverterFactory,
+        IPdfMerger pdfMerger,
+        IFileArchiver fileArchiver,
+        ICoverPageGenerator coverPageGenerator,
+        IOptions<AppSettings> appSettings)
+    {
+        _logger = logger;
+        _printQueue = printQueue;
+        _fileMonitor = fileMonitor;
+        _trayIconService = trayIconService;
+        _printService = printService;
+        _fileConverterFactory = fileConverterFactory;
+        _pdfMerger = pdfMerger;
+        _fileArchiver = fileArchiver;
+        _coverPageGenerator = coverPageGenerator;
+        _appSettings = appSettings.Value;
+
+        _fileMonitor.JobDetected += OnJobDetected;
+    }
+
+    public override Task StartAsync(CancellationToken cancellationToken)
+    {
+        _fileMonitor.StartMonitoring();
+        _trayIconService.ShowBalloonTip(2000, "PrintAssistant", "打印助手已启动，正在监控文件夹", ToolTipIcon.Info);
+        return base.StartAsync(cancellationToken);
+    }
+
+    public override Task StopAsync(CancellationToken cancellationToken)
+    {
+        _fileMonitor.StopMonitoring();
+        return base.StopAsync(cancellationToken);
+    }
+
+    private async void OnJobDetected(PrintJob job)
+    {
+        _recentJobs[job.JobId] = job;
+        _trayIconService.UpdateStatus(_recentJobs.Values.OrderByDescending(j => j.CreationTime).Take(5));
+
+        try
+        {
+        await _printQueue.EnqueueJobAsync(job).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to enqueue job {JobId}", job.JobId);
+            job.Status = JobStatus.Failed;
+        }
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            PrintJob? job = null;
+            try
+            {
+                job = await _printQueue.DequeueJobAsync(stoppingToken).ConfigureAwait(false);
+                await ProcessJobAsync(job, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (job != null)
+                {
+                    job.Status = JobStatus.Failed;
+                    job.ErrorMessage = ex.Message;
+                }
+
+                _logger.LogError(ex, "Error processing print job.");
+            }
+            finally
+            {
+                _trayIconService.UpdateStatus(_recentJobs.Values);
+            }
+        }
+    }
+
+    private async Task ProcessJobAsync(PrintJob job, CancellationToken cancellationToken)
+    {
+        job.Status = JobStatus.Converting;
+        _trayIconService.UpdateStatus(_recentJobs.Values);
+
+        var pdfStreams = new List<Stream>();
+        var disposableStreams = new List<Stream>();
+        try
+        {
+            foreach (var filePath in job.SourceFilePaths)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var converter = _fileConverterFactory.GetConverter(filePath);
+                if (converter == null)
+                {
+                    _logger.LogWarning("File {FilePath} is not supported and will be moved to unsupported directory.", filePath);
+                    _fileArchiver.MoveUnsupportedFile(filePath);
+                    continue;
+                }
+
+                try
+                {
+                    var pdfStream = await converter.ConvertToPdfAsync(filePath).ConfigureAwait(false);
+                    pdfStreams.Add(pdfStream);
+                    disposableStreams.Add(pdfStream);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to convert file {FilePath} to PDF.", filePath);
+                    throw;
+                }
+            }
+
+            if (pdfStreams.Count == 0)
+            {
+                throw new InvalidOperationException("No supported files were available for printing.");
+            }
+
+            if (_appSettings.Printing.GenerateCoverPage)
+            {
+                var coverPageStream = await _coverPageGenerator.GenerateCoverPageAsync(job).ConfigureAwait(false);
+                pdfStreams.Insert(0, coverPageStream);
+                disposableStreams.Add(coverPageStream);
+            }
+
+            var (mergedStream, totalPages) = await _pdfMerger.MergePdfsAsync(pdfStreams).ConfigureAwait(false);
+            disposableStreams.Add(mergedStream);
+
+            job.PageCount = totalPages;
+            job.Status = JobStatus.Printing;
+            _trayIconService.UpdateStatus(_recentJobs.Values);
+
+            mergedStream.Position = 0;
+            await _printService.PrintPdfAsync(mergedStream, job.SelectedPrinter ?? string.Empty, job.Copies).ConfigureAwait(false);
+
+            job.Status = JobStatus.Completed;
+            _logger.LogInformation("Job {JobId} printed successfully with {PageCount} pages.", job.JobId, job.PageCount);
+
+            mergedStream.Position = 0;
+            var archivePath = await _fileArchiver.ArchiveFilesAsync(job.SourceFilePaths, job.CreationTime, mergedStream, $"{job.JobId}.pdf").ConfigureAwait(false);
+            job.Status = JobStatus.Archived;
+            _logger.LogInformation("Job {JobId} archived at {ArchivePath}.", job.JobId, archivePath);
+
+            _trayIconService.ShowBalloonTip(2000, "打印完成", $"任务 {job.JobId} 已完成并归档。", ToolTipIcon.Info);
+        }
+        finally
+        {
+            foreach (var stream in disposableStreams)
+            {
+                stream.Dispose();
+            }
+
+            _trayIconService.UpdateStatus(_recentJobs.Values);
+        }
+    }
+}
+```
 
 #### **Services/PrintQueueService.cs**
 
-C\#
-
+```csharp
+using System.Threading.Tasks.Dataflow;
+using Microsoft.Extensions.Logging;
 using PrintAssistant.Core;  
 using PrintAssistant.Services.Abstractions;  
-using System.Threading.Tasks.Dataflow;
 
 namespace PrintAssistant.Services;
 
 public class PrintQueueService : IPrintQueue  
 {  
-    private readonly BufferBlock\<PrintJob\> \_queue \= new();
+    private readonly BufferBlock<PrintJob> _queue;
+    private readonly ILogger<PrintQueueService> _logger;
 
-    public Task EnqueueJobAsync(PrintJob job) \=\> \_queue.SendAsync(job).AsTask();
+    public PrintQueueService(ILogger<PrintQueueService> logger)
+    {
+        _logger = logger;
+        _queue = new BufferBlock<PrintJob>(new DataflowBlockOptions
+        {
+            BoundedCapacity = DataflowBlockOptions.Unbounded
+        });
+    }
 
-    public Task\<PrintJob\> DequeueJobAsync(CancellationToken cancellationToken) \=\> \_queue.ReceiveAsync(cancellationToken);
+    public async Task EnqueueJobAsync(PrintJob job)
+    {
+        if (job == null)
+        {
+            throw new ArgumentNullException(nameof(job));
+        }
 
-    public IReceivableSourceBlock\<PrintJob\> AsReceivableSourceBlock() \=\> \_queue;  
+        await _queue.SendAsync(job).ConfigureAwait(false);
+        _logger.LogInformation("Job {JobId} enqueued.", job.JobId);
+    }
+
+    public Task<PrintJob> DequeueJobAsync(CancellationToken cancellationToken) => _queue.ReceiveAsync(cancellationToken);
+
+    public IReceivableSourceBlock<PrintJob> AsReceivableSourceBlock() => _queue;
 }
+```
 
 #### **Services/PrintService.cs**
 
-C\#
-
+```csharp
+using Microsoft.Extensions.Logging;
 using PrintAssistant.Services.Abstractions;  
 using Syncfusion.PdfToImageConverter;  
 using System.Drawing.Printing;
@@ -814,32 +1249,156 @@ namespace PrintAssistant.Services;
 
 public class PrintService : IPrintService  
 {  
-    public Task PrintPdfAsync(Stream pdfStream, string printerName, int copies)  
-    {  
-        //... (实现代码)  
-}
+    private readonly ILogger<PrintService> _logger;
 
-*(由于代码过长，此处省略 PrintService.cs 的完整实现，但它将包含使用 PdfToImageConverter 和 PrintDocument 进行打印的逻辑。)*
+    public PrintService(ILogger<PrintService> logger)
+    {
+        _logger = logger;
+    }
+
+    public Task PrintPdfAsync(Stream pdfStream, string printerName, int copies)
+    {
+        _logger.LogInformation(
+            "PrintService: 打印PDF文档。打印机: {PrinterName}, 份数: {Copies}, 数据流大小: {StreamLength} bytes.",
+            printerName,
+            copies,
+            pdfStream.Length);
+
+        using var printDocument = new PrintDocument();
+        printDocument.PrinterSettings.PrinterName = printerName;
+        printDocument.PrintController = new StandardPrintController();
+        printDocument.Print();
+
+        return Task.CompletedTask;
+    }
+}
+```
 
 #### **Services/TrayIconService.cs**
 
-C\#
-
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;  
-using Microsoft.Extensions.Hosting;  
 using Microsoft.Extensions.Logging;  
 using PrintAssistant.Core;  
 using PrintAssistant.Services.Abstractions;  
-using PrintAssistant.UI;
 
 namespace PrintAssistant.Services;
 
 public class TrayIconService : ITrayIconService, IDisposable  
 {  
-    //... (实现代码)  
-}
+    private readonly IServiceProvider _serviceProvider;
+    private readonly ILogger<TrayIconService> _logger;
+    private readonly NotifyIcon _notifyIcon;
+    private readonly ContextMenuStrip _contextMenu;
+    private bool _disposed;
 
-*(由于代码过长，此处省略 TrayIconService.cs 的完整实现，但它将包含 NotifyIcon 的创建、菜单管理、跨线程更新Tooltip等逻辑。)*
+    public TrayIconService(IServiceProvider serviceProvider, ILogger<TrayIconService> logger)
+    {
+        _serviceProvider = serviceProvider;
+        _logger = logger;
+
+        _contextMenu = BuildContextMenu();
+
+        _notifyIcon = new NotifyIcon
+        {
+            Text = "PrintAssistant",
+            Icon = SystemIcons.Application,
+            Visible = true,
+            ContextMenuStrip = _contextMenu,
+        };
+    }
+
+    public void UpdateStatus(IEnumerable<PrintJob> recentJobs)
+    {
+        var jobList = recentJobs.ToList();
+
+        string tooltip = jobList.Count == 0
+            ? "打印助手：暂无任务"
+            : string.Join(Environment.NewLine, jobList.Take(5).Select(j => $"[{j.Status}] {string.Join(", ", j.SourceFilePaths.Select(Path.GetFileName))}"));
+
+        _notifyIcon.Text = tooltip.Length <= 63 ? tooltip : tooltip[..63];
+
+        _logger.LogDebug("Tray icon status updated with {Count} jobs", jobList.Count);
+    }
+
+    public void ShowBalloonTip(int timeout, string tipTitle, string tipText, ToolTipIcon tipIcon)
+        => _notifyIcon.ShowBalloonTip(timeout, tipTitle, tipText, tipIcon);
+
+    private ContextMenuStrip BuildContextMenu()
+    {
+        var menu = new ContextMenuStrip();
+
+        var settingsItem = new ToolStripMenuItem("设置(&S)", null, OnSettingsClicked);
+        var exitItem = new ToolStripMenuItem("退出(&E)", null, OnExitClicked);
+
+        menu.Items.Add(settingsItem);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(exitItem);
+
+        return menu;
+    }
+
+    private void OnSettingsClicked(object? sender, EventArgs e)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var form = scope.ServiceProvider.GetRequiredService<PrintAssistant.UI.SettingsForm>();
+        form.ShowDialog();
+    }
+
+    private void OnExitClicked(object? sender, EventArgs e)
+    {
+        _notifyIcon.Visible = false;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _notifyIcon.Visible = false;
+        _notifyIcon.Dispose();
+        _contextMenu.Dispose();
+        _disposed = true;
+    }
+}
+```
+
+#### **Services/MockPrintService.cs**
+
+```csharp
+using Microsoft.Extensions.Logging;
+using PrintAssistant.Services.Abstractions;
+
+namespace PrintAssistant.Services;
+
+public class MockPrintService : IPrintService
+{
+    private readonly ILogger<MockPrintService> _logger;
+
+    public MockPrintService(ILogger<MockPrintService> logger)
+    {
+        _logger = logger;
+    }
+
+    public Task PrintPdfAsync(Stream pdfStream, string printerName, int copies)
+    {
+        _logger.LogInformation(
+            "MockPrintService: 模拟打印任务。打印机: {PrinterName}, 份数: {Copies}, 数据流大小: {StreamLength} bytes.",
+            printerName,
+            copies,
+            pdfStream.Length);
+
+        return Task.Delay(1000);
+    }
+}
+```
 
 #### **UI/PrinterSelectionForm.cs**
 

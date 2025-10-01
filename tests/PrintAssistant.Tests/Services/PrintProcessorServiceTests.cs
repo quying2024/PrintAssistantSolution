@@ -1,6 +1,7 @@
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
+using PrintAssistant.Configuration;
 using PrintAssistant.Core;
 using PrintAssistant.Services;
 using PrintAssistant.Services.Abstractions;
@@ -10,45 +11,123 @@ namespace PrintAssistant.Tests.Services;
 
 public class PrintProcessorServiceTests
 {
-    [Fact]
-    public async Task ExecuteAsync_ShouldConsumeJobs_FromQueue()
+    private static PrintProcessorService CreateService(
+        Mock<IPrintQueue> queueMock,
+        Mock<IPrintService> printServiceMock,
+        Mock<IFileMonitor> fileMonitorMock,
+        Mock<ITrayIconService> trayIconMock,
+        Mock<IFileConverterFactory> converterFactoryMock,
+        Mock<IPdfMerger> pdfMergerMock,
+        Mock<IFileArchiver> archiverMock,
+        Mock<ICoverPageGenerator> coverPageGeneratorMock)
     {
-        // Arrange
-        var printQueueMock = new Mock<IPrintQueue>();
-        var printServiceMock = new Mock<IPrintService>();
-        var fileMonitorMock = new Mock<IFileMonitor>();
-        var trayIconMock = new Mock<ITrayIconService>();
+        var options = Options.Create(new AppSettings());
 
-        var services = new ServiceCollection();
-        services.AddTransient<PrintAssistant.UI.SettingsForm>(_ => new PrintAssistant.UI.SettingsForm(Mock.Of<Microsoft.Extensions.Options.IOptions<PrintAssistant.Configuration.AppSettings>>(), new System.IO.Abstractions.FileSystem()));
-        var provider = services.BuildServiceProvider();
-
-        var job = new PrintJob(new[] { "demo.txt" });
-        printQueueMock.SetupSequence(q => q.DequeueJobAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(job)
-            .Returns(async () =>
-            {
-                await Task.Delay(Timeout.Infinite, It.IsAny<CancellationToken>());
-                return job;
-            });
-
-        var service = new PrintProcessorService(
+        return new PrintProcessorService(
             NullLogger<PrintProcessorService>.Instance,
-            printQueueMock.Object,
+            queueMock.Object,
             fileMonitorMock.Object,
             trayIconMock.Object,
             printServiceMock.Object,
-            provider);
+            converterFactoryMock.Object,
+            pdfMergerMock.Object,
+            archiverMock.Object,
+            coverPageGeneratorMock.Object,
+            options);
+    }
+
+    [Fact]
+    public async Task ProcessJob_ShouldConvertMergePrintAndArchive()
+    {
+        // Arrange
+        var queueMock = new Mock<IPrintQueue>();
+        var printServiceMock = new Mock<IPrintService>();
+        var fileMonitorMock = new Mock<IFileMonitor>();
+        var trayIconMock = new Mock<ITrayIconService>();
+        var converterFactoryMock = new Mock<IFileConverterFactory>();
+        var pdfMergerMock = new Mock<IPdfMerger>();
+        var archiverMock = new Mock<IFileArchiver>();
+        var coverPageGeneratorMock = new Mock<ICoverPageGenerator>();
+
+        var job = new PrintJob(new[] { "file1.docx", "file2.pdf" })
+        {
+            SelectedPrinter = "PrinterA",
+            Copies = 2
+        };
+
+        queueMock.SetupSequence(q => q.DequeueJobAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(job)
+            .ThrowsAsync(new OperationCanceledException());
+
+        // Mock converters
+        var docStream = new MemoryStream(new byte[] { 1, 2, 3 });
+        var pdfStream = new MemoryStream(new byte[] { 4, 5, 6 });
+        converterFactoryMock.Setup(f => f.GetConverter("file1.docx"))
+            .Returns(Mock.Of<IFileConverter>(c => c.ConvertToPdfAsync("file1.docx") == Task.FromResult<Stream>(docStream)));
+        converterFactoryMock.Setup(f => f.GetConverter("file2.pdf"))
+            .Returns(Mock.Of<IFileConverter>());
+        converterFactoryMock.Setup(f => f.GetConverter("file2.pdf")!.ConvertToPdfAsync("file2.pdf"))
+            .ReturnsAsync(pdfStream);
+
+        // Mock cover page
+        var coverStream = new MemoryStream(new byte[] { 7, 8, 9 });
+        coverPageGeneratorMock.Setup(c => c.GenerateCoverPageAsync(It.IsAny<PrintJob>()))
+            .ReturnsAsync(coverStream);
+
+        // Mock merger
+        var mergedStream = new MemoryStream(new byte[] { 10, 11 });
+        pdfMergerMock.Setup(m => m.MergePdfsAsync(It.IsAny<IEnumerable<Stream>>()))
+            .ReturnsAsync((mergedStream, 5));
+
+        archiverMock.Setup(a => a.ArchiveFilesAsync(It.IsAny<IEnumerable<string>>(), job.CreationTime, mergedStream, It.IsAny<string>()))
+            .ReturnsAsync("archive-path");
+
+        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
         // Act
         await service.StartAsync(cts.Token);
-        await Task.Delay(100, cts.Token);
+        await Task.Delay(50);
         await service.StopAsync(cts.Token);
 
         // Assert
-        printServiceMock.Verify(p => p.PrintPdfAsync(It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<int>()), Times.Once);
+        printServiceMock.Verify(p => p.PrintPdfAsync(mergedStream, "PrinterA", 2), Times.Once);
+        pdfMergerMock.Verify(m => m.MergePdfsAsync(It.Is<IEnumerable<Stream>>(streams => streams.Count() == 3)), Times.Once);
+        archiverMock.Verify(a => a.ArchiveFilesAsync(job.SourceFilePaths, job.CreationTime, mergedStream, It.Is<string>(name => name.EndsWith(".pdf"))), Times.Once);
+        Assert.Equal(JobStatus.Archived, job.Status);
+        Assert.Equal(5, job.PageCount);
+    }
+
+    [Fact]
+    public async Task ProcessJob_ShouldHandleUnsupportedFiles()
+    {
+        var queueMock = new Mock<IPrintQueue>();
+        var printServiceMock = new Mock<IPrintService>();
+        var fileMonitorMock = new Mock<IFileMonitor>();
+        var trayIconMock = new Mock<ITrayIconService>();
+        var converterFactoryMock = new Mock<IFileConverterFactory>();
+        var pdfMergerMock = new Mock<IPdfMerger>();
+        var archiverMock = new Mock<IFileArchiver>();
+        var coverPageGeneratorMock = new Mock<ICoverPageGenerator>();
+
+        var job = new PrintJob(new[] { "unsupported.xyz" });
+        queueMock.SetupSequence(q => q.DequeueJobAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(job)
+            .ThrowsAsync(new OperationCanceledException());
+
+        converterFactoryMock.Setup(f => f.GetConverter("unsupported.xyz"))
+            .Returns((IFileConverter?)null);
+
+        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        await service.StartAsync(cts.Token);
+        await Task.Delay(100);
+        await service.StopAsync(cts.Token);
+
+        archiverMock.Verify(a => a.MoveUnsupportedFile("unsupported.xyz"), Times.Once);
     }
 }
 

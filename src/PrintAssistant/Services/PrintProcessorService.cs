@@ -1,9 +1,13 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.DependencyInjection;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using PrintAssistant.Core;
 using PrintAssistant.Services.Abstractions;
+using PrintAssistant.Configuration;
 
 namespace PrintAssistant.Services;
 
@@ -14,7 +18,11 @@ public class PrintProcessorService : BackgroundService
     private readonly IFileMonitor _fileMonitor;
     private readonly ITrayIconService _trayIconService;
     private readonly IPrintService _printService;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IFileConverterFactory _fileConverterFactory;
+    private readonly IPdfMerger _pdfMerger;
+    private readonly IFileArchiver _fileArchiver;
+    private readonly ICoverPageGenerator _coverPageGenerator;
+    private readonly AppSettings _appSettings;
 
     private readonly ConcurrentDictionary<Guid, PrintJob> _recentJobs = new();
 
@@ -24,14 +32,22 @@ public class PrintProcessorService : BackgroundService
         IFileMonitor fileMonitor,
         ITrayIconService trayIconService,
         IPrintService printService,
-        IServiceProvider serviceProvider)
+        IFileConverterFactory fileConverterFactory,
+        IPdfMerger pdfMerger,
+        IFileArchiver fileArchiver,
+        ICoverPageGenerator coverPageGenerator,
+        IOptions<AppSettings> appSettings)
     {
         _logger = logger;
         _printQueue = printQueue;
         _fileMonitor = fileMonitor;
         _trayIconService = trayIconService;
         _printService = printService;
-        _serviceProvider = serviceProvider;
+        _fileConverterFactory = fileConverterFactory;
+        _pdfMerger = pdfMerger;
+        _fileArchiver = fileArchiver;
+        _coverPageGenerator = coverPageGenerator;
+        _appSettings = appSettings.Value;
 
         _fileMonitor.JobDetected += OnJobDetected;
     }
@@ -73,14 +89,7 @@ public class PrintProcessorService : BackgroundService
             try
             {
                 job = await _printQueue.DequeueJobAsync(stoppingToken).ConfigureAwait(false);
-                job.Status = JobStatus.Processing;
-                _trayIconService.UpdateStatus(_recentJobs.Values);
-
-                // TODO: 在后续迭代中加入文件转换和 PDF 合并逻辑
-                await _printService.PrintPdfAsync(Stream.Null, job.SelectedPrinter ?? string.Empty, job.Copies).ConfigureAwait(false);
-
-                job.Status = JobStatus.Completed;
-                _logger.LogInformation("Job {JobId} completed.", job.JobId);
+                await ProcessJobAsync(job, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -100,6 +109,83 @@ public class PrintProcessorService : BackgroundService
             {
                 _trayIconService.UpdateStatus(_recentJobs.Values);
             }
+        }
+    }
+
+    private async Task ProcessJobAsync(PrintJob job, CancellationToken cancellationToken)
+    {
+        job.Status = JobStatus.Converting;
+        _trayIconService.UpdateStatus(_recentJobs.Values);
+
+        var pdfStreams = new List<Stream>();
+        var disposableStreams = new List<Stream>();
+        try
+        {
+            foreach (var filePath in job.SourceFilePaths)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var converter = _fileConverterFactory.GetConverter(filePath);
+                if (converter == null)
+                {
+                    _logger.LogWarning("File {FilePath} is not supported and will be moved to unsupported directory.", filePath);
+                    _fileArchiver.MoveUnsupportedFile(filePath);
+                    continue;
+                }
+
+                try
+                {
+                    var pdfStream = await converter.ConvertToPdfAsync(filePath).ConfigureAwait(false);
+                    pdfStreams.Add(pdfStream);
+                    disposableStreams.Add(pdfStream);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to convert file {FilePath} to PDF.", filePath);
+                    throw;
+                }
+            }
+
+            if (pdfStreams.Count == 0)
+            {
+                throw new InvalidOperationException("No supported files were available for printing.");
+            }
+
+            if (_appSettings.Printing.GenerateCoverPage)
+            {
+                var coverPageStream = await _coverPageGenerator.GenerateCoverPageAsync(job).ConfigureAwait(false);
+                pdfStreams.Insert(0, coverPageStream);
+                disposableStreams.Add(coverPageStream);
+            }
+
+            var (mergedStream, totalPages) = await _pdfMerger.MergePdfsAsync(pdfStreams).ConfigureAwait(false);
+            disposableStreams.Add(mergedStream);
+
+            job.PageCount = totalPages;
+            job.Status = JobStatus.Printing;
+            _trayIconService.UpdateStatus(_recentJobs.Values);
+
+            mergedStream.Position = 0;
+            await _printService.PrintPdfAsync(mergedStream, job.SelectedPrinter ?? string.Empty, job.Copies).ConfigureAwait(false);
+
+            job.Status = JobStatus.Completed;
+            _logger.LogInformation("Job {JobId} printed successfully with {PageCount} pages.", job.JobId, job.PageCount);
+
+            mergedStream.Position = 0;
+            var archivePath = await _fileArchiver.ArchiveFilesAsync(job.SourceFilePaths, job.CreationTime, mergedStream, $"{job.JobId}.pdf").ConfigureAwait(false);
+            job.Status = JobStatus.Archived;
+            _logger.LogInformation("Job {JobId} archived at {ArchivePath}.", job.JobId, archivePath);
+
+            _trayIconService.ShowBalloonTip(2000, "打印完成", $"任务 {job.JobId} 已完成并归档。", ToolTipIcon.Info);
+        }
+        finally
+        {
+            foreach (var stream in disposableStreams)
+            {
+                stream.Dispose();
+            }
+
+            _trayIconService.UpdateStatus(_recentJobs.Values);
         }
     }
 }
