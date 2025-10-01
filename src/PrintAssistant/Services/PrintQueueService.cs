@@ -1,14 +1,34 @@
+using System.Threading.Tasks.Dataflow;
+using Microsoft.Extensions.Logging;
 using PrintAssistant.Core;
 using PrintAssistant.Services.Abstractions;
-using System.Threading.Tasks.Dataflow;
 
 namespace PrintAssistant.Services;
 
 public class PrintQueueService : IPrintQueue
 {
-    private readonly BufferBlock<PrintJob> _queue = new();
+    private readonly BufferBlock<PrintJob> _queue;
+    private readonly ILogger<PrintQueueService> _logger;
 
-    public Task EnqueueJobAsync(PrintJob job) => _queue.SendAsync(job);
+    public PrintQueueService(ILogger<PrintQueueService> logger)
+    {
+        _logger = logger;
+        _queue = new BufferBlock<PrintJob>(new DataflowBlockOptions
+        {
+            BoundedCapacity = DataflowBlockOptions.Unbounded
+        });
+    }
+
+    public async Task EnqueueJobAsync(PrintJob job)
+    {
+        if (job == null)
+        {
+            throw new ArgumentNullException(nameof(job));
+        }
+
+        await _queue.SendAsync(job).ConfigureAwait(false);
+        _logger.LogInformation("Job {JobId} enqueued.", job.JobId);
+    }
 
     public Task<PrintJob> DequeueJobAsync(CancellationToken cancellationToken) => _queue.ReceiveAsync(cancellationToken);
 
