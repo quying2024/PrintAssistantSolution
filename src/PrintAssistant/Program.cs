@@ -59,7 +59,14 @@ internal static class Program
         services.AddSingleton<IFileSystem, FileSystem>();
 
         // 核心服务注册
+        services.AddSingleton<IPrintQueue, PrintQueueService>();
         services.AddSingleton<IFileArchiver, FileArchiver>();
+        services.AddSingleton<IFileMonitor, FileMonitorService>();
+        services.AddSingleton<ITrayIconService, TrayIconService>();
+        services.AddSingleton<IPrintService, PrintService>();
+        services.AddSingleton<IPdfMerger, PdfMerger>();
+
+        services.AddHostedService<PrintProcessorService>();
     }
 }
 
