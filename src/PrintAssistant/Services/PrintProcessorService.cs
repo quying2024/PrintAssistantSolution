@@ -129,33 +129,23 @@ public class PrintProcessorService : BackgroundService
 
         try
         {
-            var pdfFactories = await ExecuteWithRetryAsync(
-                context,
-                PrintJobStage.Conversion,
-                async () => await ConvertSourcesAsync(job, disposableStreams, cancellationToken).ConfigureAwait(false),
-                cancellationToken).ConfigureAwait(false);
+            context.Initialize(_appSettings.Printing.RetryPolicy.MaxRetryCount);
 
-            var mergeResult = await ExecuteWithRetryAsync(
-                context,
-                PrintJobStage.Merge,
-                async () => await MergeAsync(job, pdfFactories).ConfigureAwait(false),
-                cancellationToken).ConfigureAwait(false);
+            var conversionPolicy = CreateRetryPolicy(PrintJobStage.Conversion);
+            var pdfFactories = await conversionPolicy.ExecuteAsync(() => ConvertSourcesAsync(job, disposableStreams, cancellationToken)).ConfigureAwait(false);
+
+            var mergePolicy = CreateRetryPolicy(PrintJobStage.Merge);
+            var mergeResult = await mergePolicy.ExecuteAsync(() => MergeAsync(job, pdfFactories)).ConfigureAwait(false);
 
             mergedStream = mergeResult.MergedStream;
             disposableStreams.Add(mergedStream);
             job.PageCount = mergeResult.TotalPages;
 
-            await ExecuteWithRetryAsync(
-                context,
-                PrintJobStage.Print,
-                async () => await PrintAsync(job, mergedStream).ConfigureAwait(false),
-                cancellationToken).ConfigureAwait(false);
+            var printPolicy = CreateRetryPolicy(PrintJobStage.Print);
+            await printPolicy.ExecuteAsync(() => PrintAsync(job, mergedStream)).ConfigureAwait(false);
 
-            await ExecuteWithRetryAsync(
-                context,
-                PrintJobStage.Archive,
-                async () => await ArchiveAsync(job, mergedStream).ConfigureAwait(false),
-                cancellationToken).ConfigureAwait(false);
+            var archivePolicy = CreateRetryPolicy(PrintJobStage.Archive);
+            await archivePolicy.ExecuteAsync(() => ArchiveAsync(job, mergedStream)).ConfigureAwait(false);
         }
         finally
         {
@@ -166,96 +156,6 @@ public class PrintProcessorService : BackgroundService
 
             _trayIconService.UpdateStatus(_recentJobs.Values);
         }
-    }
-
-    private Task ExecuteWithRetryAsync(RetryContext context, PrintJobStage stage, Func<Task> action, CancellationToken cancellationToken)
-        => ExecuteWithRetryAsync(context, stage, async () =>
-        {
-            await action().ConfigureAwait(false);
-            return true;
-        }, cancellationToken);
-
-    private async Task<T> ExecuteWithRetryAsync<T>(RetryContext context, PrintJobStage stage, Func<Task<T>> action, CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            UpdateStatusForStage(context.Job, stage);
-
-            try
-            {
-                var result = await action().ConfigureAwait(false);
-                context.Reset();
-                return result;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                if (TryPrepareRetry(context, stage, ex, out var delay))
-                {
-                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                context.Job.LastFailedStage = stage;
-                context.Job.ErrorMessage = ex.Message;
-                context.Job.Status = JobStatus.Failed;
-                _trayIconService.UpdateStatus(_recentJobs.Values);
-                _logger.LogError(ex, "Stage {Stage} failed for job {JobId} with no further retries.", stage, context.Job.JobId);
-                throw;
-            }
-        }
-    }
-
-    private bool TryPrepareRetry(RetryContext context, PrintJobStage stage, Exception exception, out TimeSpan delay)
-    {
-        delay = TimeSpan.Zero;
-
-        if (stage == PrintJobStage.Conversion && exception is InvalidOperationException)
-        {
-            return false;
-        }
-
-        if (!_retryDecider.ShouldRetry(stage))
-        {
-            return false;
-        }
-
-        context.IncrementAttempt(stage, exception.Message ?? exception.GetType().Name);
-
-        var waitTime = _retryPolicy.GetDelay(context.Attempt - 1);
-        if (waitTime is null)
-        {
-            return false;
-        }
-
-        context.Job.Status = JobStatus.Retrying;
-        _logger.LogWarning(exception, "Stage {Stage} failed for job {JobId}. Will retry attempt {Attempt} after {Delay} ms.", stage, context.Job.JobId, context.Attempt, waitTime.Value.TotalMilliseconds);
-        _trayIconService.UpdateStatus(_recentJobs.Values);
-        delay = waitTime.Value;
-        return true;
-    }
-
-    private void UpdateStatusForStage(PrintJob job, PrintJobStage stage)
-    {
-        switch (stage)
-        {
-            case PrintJobStage.Conversion:
-                job.Status = JobStatus.Converting;
-                break;
-            case PrintJobStage.Merge:
-            case PrintJobStage.Archive:
-                job.Status = JobStatus.Processing;
-                break;
-            case PrintJobStage.Print:
-                job.Status = JobStatus.Printing;
-                break;
-        }
-
-        _trayIconService.UpdateStatus(_recentJobs.Values);
     }
 
     private async Task<List<Func<Task<Stream>>>> ConvertSourcesAsync(PrintJob job, List<Stream> disposableStreams, CancellationToken cancellationToken)
@@ -323,6 +223,24 @@ public class PrintProcessorService : BackgroundService
         job.Status = JobStatus.Archived;
         _logger.LogInformation("Job {JobId} archived at {ArchivePath}.", job.JobId, archivePath);
         _trayIconService.ShowBalloonTip(2000, "打印完成", $"任务 {job.JobId} 已完成并归档。", ToolTipIcon.Info);
+    }
+
+    private AsyncRetryPolicy<T> CreateRetryPolicy<T>(PrintJobStage stage)
+    {
+        return Policy
+            .Handle<Exception>()
+            .WaitAndRetryAsync(
+                retryCount: _appSettings.Printing.RetryPolicy.MaxRetryCount,
+                sleepDurationProvider: attempt => _retryPolicy.GetDelay(attempt - 1) ?? TimeSpan.Zero,
+                onRetry: (exception, timeSpan, attempt, _) =>
+                {
+                    _logger.LogWarning(exception,
+                        "Stage {Stage} failed for job {JobId}. Retry attempt {Attempt} after {Delay} ms.",
+                        stage,
+                        _currentJobId,
+                        attempt,
+                        timeSpan.TotalMilliseconds);
+                });
     }
 }
 

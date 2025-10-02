@@ -12,6 +12,13 @@ public sealed class RetryContext
     public PrintJob Job { get; }
 
     public int Attempt => Job.AttemptCount;
+    public int MaxRetries { get; private set; }
+
+    public void Initialize(int maxRetries)
+    {
+        MaxRetries = maxRetries;
+        Job.MaxRetryCount = maxRetries;
+    }
 
     public void IncrementAttempt(PrintJobStage stage, string message)
     {
