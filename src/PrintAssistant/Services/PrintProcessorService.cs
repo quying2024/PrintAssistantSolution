@@ -121,8 +121,7 @@ public class PrintProcessorService : BackgroundService
 
     private async Task ProcessJobAsync(PrintJob job, CancellationToken cancellationToken)
     {
-        var context = new RetryContext(job);
-        context.Reset();
+        var context = new RetryContext(job, _appSettings.Printing.RetryPolicy);
 
         var disposableStreams = new List<Stream>();
         Stream? mergedStream = null;
