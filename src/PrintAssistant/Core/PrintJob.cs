@@ -10,6 +10,9 @@ public class PrintJob
     public string? ErrorMessage { get; set; }
     public string? SelectedPrinter { get; set; }
     public int Copies { get; set; }
+    public PrintJobStage? LastFailedStage { get; set; }
+    public int AttemptCount { get; set; }
+    public int MaxRetryCount { get; set; }
 
     public PrintJob(IEnumerable<string> sourceFilePaths)
     {

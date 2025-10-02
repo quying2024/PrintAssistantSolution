@@ -5,6 +5,7 @@ public enum JobStatus
     Pending,
     Processing,
     Converting,
+    Retrying,
     Printing,
     Completed,
     Failed,

@@ -91,12 +91,13 @@ XML
     \<PackageReference Include\="Serilog.Sinks.File" Version\="5.0.0" /\>  
     \<PackageReference Include\="System.IO.Abstractions" Version\="20.0.15" /\>  
     \<PackageReference Include\="System.Threading.Tasks.Dataflow" Version\="8.0.0" /\>  
-    \<PackageReference Include\="Syncfusion.DocIO.Net.Core" Version\="\*" /\>  
-    \<PackageReference Include\="Syncfusion.DocIORenderer.Net.Core" Version\="\*" /\>  
-    \<PackageReference Include\="Syncfusion.Pdf.Net.Core" Version\="\*" /\>  
-    \<PackageReference Include\="Syncfusion.PdfToImageConverter.Net" Version\="\*" /\>  
-    \<PackageReference Include\="Syncfusion.XlsIO.Net.Core" Version\="\*" /\>  
-    \<PackageReference Include\="Syncfusion.XlsIORenderer.Net.Core" Version\="\*" /\>  
+    \<PackageReference Include\="Microsoft.Windows.Compatibility" Version\="8.0.1" />  
+    <PackageReference Include="Syncfusion.DocIO.Net.Core" Version="*" />  
+    <PackageReference Include="Syncfusion.DocIORenderer.Net.Core" Version="*" />  
+    <PackageReference Include="Syncfusion.Pdf.Net.Core" Version="*" />  
+    <PackageReference Include="Syncfusion.PdfToImageConverter.Net" Version="*" />  
+    <PackageReference Include="Syncfusion.XlsIO.Net.Core" Version="*" />  
+    <PackageReference Include="Syncfusion.XlsIORenderer.Net.Core" Version="*" />  
   \</ItemGroup\>
 
   \<ItemGroup\>  
@@ -135,8 +136,27 @@ JSON
       "MoveToPath": "" // 留空则默认为监控文件夹下的 "Unsupported" 子文件夹  
     },  
     "Printing": {  
-      "ExcludedPrinters":,  
-      "GenerateCoverPage": true  
+      "ExcludedPrinters": [],
+      "GenerateCoverPage": true,
+      "UseMockPrintService": true,
+      "RetryPolicy": {
+        "MaxRetryCount": 3,
+        "InitialDelayMilliseconds": 1000,
+        "BackoffFactor": 2,
+        "MaxDelayMilliseconds": 30000,
+        "RetryOn": [ "Conversion", "Merge", "Print", "Archive" ]
+      },
+      "Windows": {
+        "DefaultPrinter": "",
+        "DefaultCopies": 1,
+        "Duplex": false,
+        "Collate": true,
+        "PaperSource": "",
+        "Landscape": false,
+        "StretchToFit": true,
+        "Color": true,
+        "Dpi": 200
+      }
     },  
     "Archiving": {  
       "SubdirectoryFormat": "Processed\_{0:yyyyMMdd\_HHmmss}"  
@@ -199,7 +219,17 @@ internal static class Program
         services.AddSingleton<IFileArchiver, FileArchiver>();
         services.AddSingleton<IFileMonitor, FileMonitorService>();
         services.AddSingleton<ITrayIconService, TrayIconService>();
-        services.AddSingleton<IPrintService, MockPrintService>();
+
+        bool useMock = configuration.GetValue<bool>("AppSettings:Printing:UseMockPrintService");
+        if (useMock)
+        {
+            services.AddSingleton<IPrintService, MockPrintService>();
+        }
+        else
+        {
+            services.AddSingleton<IPrintService, WindowsPrintService>();
+        }
+
         services.AddSingleton<IPdfMerger, PdfMerger>();
         services.AddHostedService<PrintProcessorService>();
     }

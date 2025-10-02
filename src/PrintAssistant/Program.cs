@@ -7,6 +7,7 @@ using PrintAssistant.Configuration;
 using PrintAssistant.Services;
 using PrintAssistant.Services.Abstractions;
 using PrintAssistant.Services.Converters;
+using PrintAssistant.Services.Retry;
 using Serilog;
 using System.IO.Abstractions;
 
@@ -62,10 +63,20 @@ internal static class Program
         services.AddSingleton<IFileArchiver, FileArchiver>();
         services.AddSingleton<IFileMonitor, FileMonitorService>();
         services.AddSingleton<ITrayIconService, TrayIconService>();
-        services.AddSingleton<IPrintService, MockPrintService>();
+        bool useMock = configuration.GetValue<bool>("AppSettings:Printing:UseMockPrintService");
+        if (useMock)
+        {
+            services.AddSingleton<IPrintService, MockPrintService>();
+        }
+        else
+        {
+            services.AddSingleton<IPrintService, WindowsPrintService>();
+        }
         services.AddSingleton<IPdfMerger, PdfMerger>();
         services.AddSingleton<IFileConverterFactory, FileConverterFactory>();
         services.AddSingleton<ICoverPageGenerator, CoverPageGenerator>();
+        services.AddSingleton<IRetryPolicy, DefaultRetryPolicy>();
+        services.AddSingleton<IJobStageRetryDecider, DefaultRetryPolicy>();
 
         services.AddTransient<WordToPdfConverter>();
         services.AddTransient<ExcelToPdfConverter>();

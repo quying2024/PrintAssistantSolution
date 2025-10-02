@@ -19,9 +19,12 @@ public class PrintProcessorServiceTests
         Mock<IFileConverterFactory> converterFactoryMock,
         Mock<IPdfMerger> pdfMergerMock,
         Mock<IFileArchiver> archiverMock,
-        Mock<ICoverPageGenerator> coverPageGeneratorMock)
+        Mock<ICoverPageGenerator> coverPageGeneratorMock,
+        IRetryPolicy retryPolicy,
+        IJobStageRetryDecider retryDecider,
+        AppSettings? settings = null)
     {
-        var options = Options.Create(new AppSettings());
+        var options = Options.Create(settings ?? new AppSettings());
 
         return new PrintProcessorService(
             NullLogger<PrintProcessorService>.Instance,
@@ -33,6 +36,8 @@ public class PrintProcessorServiceTests
             pdfMergerMock.Object,
             archiverMock.Object,
             coverPageGeneratorMock.Object,
+            retryPolicy,
+            retryDecider,
             options);
     }
 
@@ -82,7 +87,14 @@ public class PrintProcessorServiceTests
         archiverMock.Setup(a => a.ArchiveFilesAsync(It.IsAny<IEnumerable<string>>(), job.CreationTime, mergedStream, It.IsAny<string>()))
             .ReturnsAsync("archive-path");
 
-        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock);
+        var retryPolicyMock = new Mock<IRetryPolicy>();
+        retryPolicyMock.Setup(p => p.GetDelay(It.IsAny<int>())).Returns((TimeSpan?)null);
+        var retryDeciderMock = new Mock<IJobStageRetryDecider>();
+        retryDeciderMock.Setup(d => d.ShouldRetry(It.IsAny<PrintJobStage>())).Returns(false);
+
+        var settings = new AppSettings();
+
+        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object, settings);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
@@ -119,7 +131,12 @@ public class PrintProcessorServiceTests
         converterFactoryMock.Setup(f => f.GetConverter("unsupported.xyz"))
             .Returns((IFileConverter?)null);
 
-        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock);
+        var retryPolicyMock = new Mock<IRetryPolicy>();
+        retryPolicyMock.Setup(p => p.GetDelay(It.IsAny<int>())).Returns((TimeSpan?)null);
+        var retryDeciderMock = new Mock<IJobStageRetryDecider>();
+        retryDeciderMock.Setup(d => d.ShouldRetry(It.IsAny<PrintJobStage>())).Returns(false);
+
+        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 

@@ -1,4 +1,7 @@
-﻿namespace PrintAssistant.Services.Abstractions;
+﻿using PrintAssistant.Configuration;
+using PrintAssistant.Core;
+
+namespace PrintAssistant.Services.Abstractions;
 
 public interface IPrintService
 {

@@ -33,5 +33,16 @@ public class PrintQueueService : IPrintQueue
     public Task<PrintJob> DequeueJobAsync(CancellationToken cancellationToken) => _queue.ReceiveAsync(cancellationToken);
 
     public IReceivableSourceBlock<PrintJob> AsReceivableSourceBlock() => _queue;
+
+    public void ReleaseJob(PrintJob job)
+    {
+        if (job.LastFailedStage == null)
+        {
+            return;
+        }
+
+        _logger.LogWarning("Releasing job {JobId} back to queue after failure at stage {Stage}.", job.JobId, job.LastFailedStage);
+        _queue.Post(job);
+    }
 }
 

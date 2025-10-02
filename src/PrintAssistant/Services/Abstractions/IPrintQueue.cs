@@ -8,5 +8,6 @@ public interface IPrintQueue
     Task EnqueueJobAsync(PrintJob job);
     Task<PrintJob> DequeueJobAsync(CancellationToken cancellationToken);
     IReceivableSourceBlock<PrintJob> AsReceivableSourceBlock();
+    void ReleaseJob(PrintJob job);
 }
 
