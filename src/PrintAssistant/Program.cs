@@ -53,7 +53,7 @@ internal static class Program
     private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
     {
         // 配置强类型选项
-        services.Configure<AppSettings>(configuration.GetSection("AppSettings"));
+        services.Configure<AppSettings>(configuration.GetSection("ApplicationSettings"));
 
         // 文件系统抽象
         services.AddSingleton<IFileSystem, FileSystem>();
@@ -63,7 +63,7 @@ internal static class Program
         services.AddSingleton<IFileArchiver, FileArchiver>();
         services.AddSingleton<IFileMonitor, FileMonitorService>();
         services.AddSingleton<ITrayIconService, TrayIconService>();
-        bool useMock = configuration.GetValue<bool>("AppSettings:Printing:UseMockPrintService");
+        bool useMock = configuration.GetValue<bool>("ApplicationSettings:Printing:UseMockPrintService");
         if (useMock)
         {
             services.AddSingleton<IPrintService, MockPrintService>();

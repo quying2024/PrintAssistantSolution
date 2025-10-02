@@ -6,37 +6,70 @@ namespace PrintAssistant.Services;
 
 public class PdfMerger : IPdfMerger
 {
-    public async Task<(Stream MergedPdfStream, int TotalPages)> MergePdfsAsync(IEnumerable<Stream> pdfStreams)
+    public async Task<(Stream MergedPdfStream, int TotalPages)> MergePdfsAsync(IEnumerable<Func<Task<Stream>>> pdfFactories)
     {
-        if (pdfStreams == null)
+        if (pdfFactories == null)
         {
-            throw new ArgumentNullException(nameof(pdfStreams));
-        }
-
-        var streams = pdfStreams.Where(stream => stream != null).ToList();
-        if (streams.Count == 0)
-        {
-            return (Stream.Null, 0);
+            throw new ArgumentNullException(nameof(pdfFactories));
         }
 
         using var mergedDocument = new PdfDocument();
+        var totalPages = 0;
+        var openedStreams = new List<Stream>();
+        var loadedDocuments = new List<PdfLoadedDocument>();
 
-        foreach (var stream in streams)
+        try
         {
-            stream.Position = 0;
-            using var loadedDocument = new PdfLoadedDocument(stream);
-            mergedDocument.Append(loadedDocument);
+            foreach (var factory in pdfFactories)
+            {
+                if (factory == null)
+                {
+                    continue;
+                }
+
+                var pdfStream = await factory().ConfigureAwait(false);
+                if (pdfStream == null)
+                {
+                    continue;
+                }
+
+                if (pdfStream.CanSeek)
+                {
+                    pdfStream.Position = 0;
+                }
+
+                var loadedDocument = new PdfLoadedDocument(pdfStream);
+                mergedDocument.Append(loadedDocument);
+                totalPages += loadedDocument.Pages.Count;
+
+                openedStreams.Add(pdfStream);
+                loadedDocuments.Add(loadedDocument);
+            }
+
+            if (totalPages == 0)
+            {
+                return (Stream.Null, 0);
+            }
+
+            var resultStream = new MemoryStream();
+            mergedDocument.Save(resultStream);
+            await resultStream.FlushAsync().ConfigureAwait(false);
+            resultStream.Position = 0;
+
+            return (resultStream, totalPages);
         }
+        finally
+        {
+            foreach (var document in loadedDocuments)
+            {
+                document.Close(true);
+            }
 
-        var resultStream = new MemoryStream();
-        mergedDocument.Save(resultStream);
-        await resultStream.FlushAsync().ConfigureAwait(false);
-        resultStream.Position = 0;
-
-        var totalPages = mergedDocument.Pages.Count;
-        mergedDocument.Close(true);
-
-        return (resultStream, totalPages);
+            foreach (var stream in openedStreams)
+            {
+                stream.Dispose();
+            }
+        }
     }
 }
 

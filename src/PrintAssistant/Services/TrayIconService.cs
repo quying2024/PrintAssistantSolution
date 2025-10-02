@@ -16,12 +16,16 @@ public class TrayIconService : ITrayIconService, IDisposable
     private readonly ILogger<TrayIconService> _logger;
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _contextMenu;
+    private readonly Control _uiInvoker;
     private bool _disposed;
 
     public TrayIconService(IServiceProvider serviceProvider, ILogger<TrayIconService> logger)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
+
+        _uiInvoker = new Control();
+        _uiInvoker.CreateControl();
 
         _contextMenu = BuildContextMenu();
 
@@ -42,13 +46,13 @@ public class TrayIconService : ITrayIconService, IDisposable
             ? "打印助手：暂无任务"
             : string.Join(Environment.NewLine, jobList.Take(5).Select(j => $"[{j.Status}] {string.Join(", ", j.SourceFilePaths.Select(Path.GetFileName))}"));
 
-        _notifyIcon.Text = tooltip.Length <= 63 ? tooltip : tooltip[..63];
+        UpdateNotifyIconText(tooltip);
 
         _logger.LogDebug("Tray icon status updated with {Count} jobs", jobList.Count);
     }
 
     public void ShowBalloonTip(int timeout, string tipTitle, string tipText, ToolTipIcon tipIcon)
-        => _notifyIcon.ShowBalloonTip(timeout, tipTitle, tipText, tipIcon);
+        => _uiInvoker.BeginInvoke(new Action(() => _notifyIcon.ShowBalloonTip(timeout, tipTitle, tipText, tipIcon)));
 
     private ContextMenuStrip BuildContextMenu()
     {
@@ -84,10 +88,24 @@ public class TrayIconService : ITrayIconService, IDisposable
             return;
         }
 
+        _uiInvoker.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _contextMenu.Dispose();
         _disposed = true;
+    }
+
+    private void UpdateNotifyIconText(string text)
+    {
+        var truncated = text.Length <= 63 ? text : text[..63];
+        if (_uiInvoker.InvokeRequired)
+        {
+            _uiInvoker.BeginInvoke(new Action(() => _notifyIcon.Text = truncated));
+        }
+        else
+        {
+            _notifyIcon.Text = truncated;
+        }
     }
 }
 

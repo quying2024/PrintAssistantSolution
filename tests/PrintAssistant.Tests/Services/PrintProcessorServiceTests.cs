@@ -65,14 +65,10 @@ public class PrintProcessorServiceTests
             .ThrowsAsync(new OperationCanceledException());
 
         // Mock converters
-        var docStream = new MemoryStream(new byte[] { 1, 2, 3 });
-        var pdfStream = new MemoryStream(new byte[] { 4, 5, 6 });
         converterFactoryMock.Setup(f => f.GetConverter("file1.docx"))
-            .Returns(Mock.Of<IFileConverter>(c => c.ConvertToPdfAsync("file1.docx") == Task.FromResult<Stream>(docStream)));
+            .Returns(Mock.Of<IFileConverter>(c => c.ConvertToPdfAsync("file1.docx") == Task.FromResult<Stream>(new MemoryStream(new byte[] { 1, 2, 3 }))));
         converterFactoryMock.Setup(f => f.GetConverter("file2.pdf"))
-            .Returns(Mock.Of<IFileConverter>());
-        converterFactoryMock.Setup(f => f.GetConverter("file2.pdf")!.ConvertToPdfAsync("file2.pdf"))
-            .ReturnsAsync(pdfStream);
+            .Returns(Mock.Of<IFileConverter>(c => c.ConvertToPdfAsync("file2.pdf") == Task.FromResult<Stream>(new MemoryStream(new byte[] { 4, 5, 6 }))));
 
         // Mock cover page
         var coverStream = new MemoryStream(new byte[] { 7, 8, 9 });
@@ -81,10 +77,10 @@ public class PrintProcessorServiceTests
 
         // Mock merger
         var mergedStream = new MemoryStream(new byte[] { 10, 11 });
-        pdfMergerMock.Setup(m => m.MergePdfsAsync(It.IsAny<IEnumerable<Stream>>()))
+        pdfMergerMock.Setup(m => m.MergePdfsAsync(It.IsAny<IEnumerable<Func<Task<Stream>>>>()))
             .ReturnsAsync((mergedStream, 5));
 
-        archiverMock.Setup(a => a.ArchiveFilesAsync(It.IsAny<IEnumerable<string>>(), job.CreationTime, mergedStream, It.IsAny<string>()))
+        archiverMock.Setup(a => a.ArchiveFilesAsync(It.IsAny<IEnumerable<string>>(), job.CreationTime, It.IsAny<Stream>(), It.IsAny<string>()))
             .ReturnsAsync("archive-path");
 
         var retryPolicyMock = new Mock<IRetryPolicy>();
@@ -105,7 +101,7 @@ public class PrintProcessorServiceTests
 
         // Assert
         printServiceMock.Verify(p => p.PrintPdfAsync(mergedStream, "PrinterA", 2), Times.Once);
-        pdfMergerMock.Verify(m => m.MergePdfsAsync(It.Is<IEnumerable<Stream>>(streams => streams.Count() == 3)), Times.Once);
+        pdfMergerMock.Verify(m => m.MergePdfsAsync(It.Is<IEnumerable<Func<Task<Stream>>>>(factories => factories.Count() == 3)), Times.Once);
         archiverMock.Verify(a => a.ArchiveFilesAsync(job.SourceFilePaths, job.CreationTime, mergedStream, It.Is<string>(name => name.EndsWith(".pdf"))), Times.Once);
         Assert.Equal(JobStatus.Archived, job.Status);
         Assert.Equal(5, job.PageCount);

@@ -129,17 +129,16 @@ public class PrintProcessorService : BackgroundService
 
         try
         {
-            var pdfStreams = await ExecuteWithRetryAsync(
+            var pdfFactories = await ExecuteWithRetryAsync(
                 context,
                 PrintJobStage.Conversion,
-                async () => await ConvertSourcesAsync(job, cancellationToken).ConfigureAwait(false),
+                async () => await ConvertSourcesAsync(job, disposableStreams, cancellationToken).ConfigureAwait(false),
                 cancellationToken).ConfigureAwait(false);
-            disposableStreams.AddRange(pdfStreams);
 
             var mergeResult = await ExecuteWithRetryAsync(
                 context,
                 PrintJobStage.Merge,
-                async () => await MergeAsync(job, pdfStreams).ConfigureAwait(false),
+                async () => await MergeAsync(job, pdfFactories).ConfigureAwait(false),
                 cancellationToken).ConfigureAwait(false);
 
             mergedStream = mergeResult.MergedStream;
@@ -259,64 +258,52 @@ public class PrintProcessorService : BackgroundService
         _trayIconService.UpdateStatus(_recentJobs.Values);
     }
 
-    private async Task<List<Stream>> ConvertSourcesAsync(PrintJob job, CancellationToken cancellationToken)
+    private async Task<List<Func<Task<Stream>>>> ConvertSourcesAsync(PrintJob job, List<Stream> disposableStreams, CancellationToken cancellationToken)
     {
-        var pdfStreams = new List<Stream>();
+        var factories = new List<Func<Task<Stream>>>();
 
-        try
+        foreach (var filePath in job.SourceFilePaths)
         {
-            foreach (var filePath in job.SourceFilePaths)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var converter = _fileConverterFactory.GetConverter(filePath);
+            if (converter == null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var converter = _fileConverterFactory.GetConverter(filePath);
-                if (converter == null)
-                {
-                    _logger.LogWarning("File {FilePath} is not supported and will be moved to unsupported directory.", filePath);
-                    _fileArchiver.MoveUnsupportedFile(filePath);
-                    continue;
-                }
-
-                try
-                {
-                    var pdfStream = await converter.ConvertToPdfAsync(filePath).ConfigureAwait(false);
-                    pdfStreams.Add(pdfStream);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to convert file {FilePath} to PDF.", filePath);
-                    throw;
-                }
+                _logger.LogWarning("File {FilePath} is not supported and will be moved to unsupported directory.", filePath);
+                _fileArchiver.MoveUnsupportedFile(filePath);
+                continue;
             }
 
-            if (pdfStreams.Count == 0)
+            factories.Add(async () =>
             {
-                throw new InvalidOperationException("No supported files were available for printing.");
-            }
-
-            if (_appSettings.Printing.GenerateCoverPage)
-            {
-                var coverPageStream = await _coverPageGenerator.GenerateCoverPageAsync(job).ConfigureAwait(false);
-                pdfStreams.Insert(0, coverPageStream);
-            }
-
-            _logger.LogInformation("Converted {Count} files for job {JobId}.", pdfStreams.Count, job.JobId);
-            return pdfStreams;
+                var pdfStream = await converter.ConvertToPdfAsync(filePath).ConfigureAwait(false);
+                disposableStreams.Add(pdfStream);
+                return pdfStream;
+            });
         }
-        catch
+
+        if (factories.Count == 0)
         {
-            foreach (var stream in pdfStreams)
-            {
-                stream.Dispose();
-            }
-
-            throw;
+            throw new InvalidOperationException("No supported files were available for printing.");
         }
+
+        if (_appSettings.Printing.GenerateCoverPage)
+        {
+            factories.Insert(0, async () =>
+            {
+                var coverStream = await _coverPageGenerator.GenerateCoverPageAsync(job).ConfigureAwait(false);
+                disposableStreams.Add(coverStream);
+                return coverStream;
+            });
+        }
+
+        _logger.LogInformation("Prepared {Count} PDF factories for job {JobId}.", factories.Count, job.JobId);
+        return factories;
     }
 
-    private async Task<(Stream MergedStream, int TotalPages)> MergeAsync(PrintJob job, IReadOnlyList<Stream> pdfStreams)
+    private async Task<(Stream MergedStream, int TotalPages)> MergeAsync(PrintJob job, IReadOnlyList<Func<Task<Stream>>> pdfFactories)
     {
-        var result = await _pdfMerger.MergePdfsAsync(pdfStreams).ConfigureAwait(false);
+        var result = await _pdfMerger.MergePdfsAsync(pdfFactories).ConfigureAwait(false);
         _logger.LogInformation("Merged PDF for job {JobId} with {PageCount} pages.", job.JobId, result.TotalPages);
         return result;
     }

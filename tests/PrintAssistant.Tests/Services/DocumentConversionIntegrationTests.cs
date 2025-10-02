@@ -46,9 +46,12 @@ public class DocumentConversionIntegrationTests : IDisposable
         await using var excelPdf = await new ExcelToPdfConverter(_fileSystem).ConvertToPdfAsync(excelPath);
         await using var imagePdf = await new ImageToPdfConverter(_fileSystem).ConvertToPdfAsync(imagePath);
 
-        var pdfStreams = new List<Stream> { CloneStream(wordPdf), CloneStream(excelPdf), CloneStream(imagePdf) };
+        var baseStreams = new List<Stream> { CloneStream(wordPdf), CloneStream(excelPdf), CloneStream(imagePdf) };
+        var pdfFactories = baseStreams
+            .Select<Stream, Func<Task<Stream>>>(stream => () => Task.FromResult<Stream>(CloneStream(stream)))
+            .ToList();
 
-        foreach (var pdfStream in pdfStreams)
+        foreach (var pdfStream in baseStreams)
         {
             pdfStream.Position = 0;
             using var loadedDocument = new PdfLoadedDocument(pdfStream);
@@ -56,11 +59,17 @@ public class DocumentConversionIntegrationTests : IDisposable
         }
 
         var merger = new PdfMerger();
-        var (mergedStream, totalPages) = await merger.MergePdfsAsync(pdfStreams);
+        var (mergedStream, totalPages) = await merger.MergePdfsAsync(pdfFactories);
 
-        Assert.True(totalPages >= pdfStreams.Count);
+        Assert.True(totalPages >= baseStreams.Count);
         using var mergedDocument = new PdfLoadedDocument(mergedStream);
         Assert.Equal(totalPages, mergedDocument.PageCount);
+
+        mergedStream.Dispose();
+        foreach (var stream in baseStreams)
+        {
+            stream.Dispose();
+        }
     }
 
     [Fact]
@@ -74,6 +83,10 @@ public class DocumentConversionIntegrationTests : IDisposable
             pdfStreams.Add(await CreateSyntheticPdfStreamAsync($"Sample Document #{i + 1}"));
         }
 
+        var pdfFactories = pdfStreams
+            .Select<Stream, Func<Task<Stream>>>(stream => () => Task.FromResult<Stream>(CloneStream(stream)))
+            .ToList();
+
         var merger = new PdfMerger();
 
         GC.Collect();
@@ -82,7 +95,7 @@ public class DocumentConversionIntegrationTests : IDisposable
 
         var memoryBefore = GC.GetTotalMemory(forceFullCollection: true);
         var stopwatch = Stopwatch.StartNew();
-        var (mergedStream, totalPages) = await merger.MergePdfsAsync(pdfStreams);
+        var (mergedStream, totalPages) = await merger.MergePdfsAsync(pdfFactories);
         stopwatch.Stop();
         var memoryAfter = GC.GetTotalMemory(forceFullCollection: true);
 
@@ -95,6 +108,7 @@ public class DocumentConversionIntegrationTests : IDisposable
         _output.WriteLine($"Elapsed: {stopwatch.ElapsedMilliseconds} ms.");
         _output.WriteLine($"Approx. memory delta: {(memoryAfter - memoryBefore) / 1024.0 / 1024.0:F2} MB.");
 
+        mergedStream.Dispose();
         foreach (var stream in pdfStreams)
         {
             stream.Dispose();
