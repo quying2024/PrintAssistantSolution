@@ -13,6 +13,7 @@ public class PrintJob
     public PrintJobStage? LastFailedStage { get; set; }
     public int AttemptCount { get; set; }
     public int MaxRetryCount { get; set; }
+    public HashSet<string> UnsupportedFilesMoved { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public PrintJob(IEnumerable<string> sourceFilePaths)
     {

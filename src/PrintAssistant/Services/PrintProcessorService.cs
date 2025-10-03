@@ -2,13 +2,18 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Windows.Forms;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Polly;
+using Polly.Retry;
+using PrintAssistant.Configuration;
 using PrintAssistant.Core;
 using PrintAssistant.Services.Abstractions;
-using PrintAssistant.Configuration;
 using PrintAssistant.Services.Retry;
+using PrintAssistant.UI;
 
 namespace PrintAssistant.Services;
 
@@ -23,8 +28,9 @@ public class PrintProcessorService : BackgroundService
     private readonly IPdfMerger _pdfMerger;
     private readonly IFileArchiver _fileArchiver;
     private readonly ICoverPageGenerator _coverPageGenerator;
-    private readonly IRetryPolicy _retryPolicy;
+    private readonly PrintAssistant.Services.Abstractions.IRetryPolicy _retryPolicy;
     private readonly IJobStageRetryDecider _retryDecider;
+    private readonly IServiceProvider _serviceProvider;
     private readonly AppSettings _appSettings;
 
     private readonly ConcurrentDictionary<Guid, PrintJob> _recentJobs = new();
@@ -39,9 +45,10 @@ public class PrintProcessorService : BackgroundService
         IPdfMerger pdfMerger,
         IFileArchiver fileArchiver,
         ICoverPageGenerator coverPageGenerator,
-        IRetryPolicy retryPolicy,
+        PrintAssistant.Services.Abstractions.IRetryPolicy retryPolicy,
         IJobStageRetryDecider retryDecider,
-        IOptions<AppSettings> appSettings)
+        IOptions<AppSettings> appSettings,
+        IServiceProvider serviceProvider)
     {
         _logger = logger;
         _printQueue = printQueue;
@@ -55,6 +62,7 @@ public class PrintProcessorService : BackgroundService
         _retryPolicy = retryPolicy;
         _retryDecider = retryDecider;
         _appSettings = appSettings.Value;
+        _serviceProvider = serviceProvider;
 
         _fileMonitor.JobDetected += OnJobDetected;
     }
@@ -125,26 +133,41 @@ public class PrintProcessorService : BackgroundService
 
         var disposableStreams = new List<Stream>();
         Stream? mergedStream = null;
+        Stream? archiveStream = null;
 
         try
         {
-            context.Initialize(_appSettings.Printing.RetryPolicy.MaxRetryCount);
-
             var conversionPolicy = CreateRetryPolicy(PrintJobStage.Conversion);
-            var pdfFactories = await conversionPolicy.ExecuteAsync(() => ConvertSourcesAsync(job, disposableStreams, cancellationToken)).ConfigureAwait(false);
+            var pdfFactories = await conversionPolicy.ExecuteAsync(async () => await ConvertSourcesAsync(job, disposableStreams, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
 
             var mergePolicy = CreateRetryPolicy(PrintJobStage.Merge);
-            var mergeResult = await mergePolicy.ExecuteAsync(() => MergeAsync(job, pdfFactories)).ConfigureAwait(false);
+            var mergeResult = await mergePolicy.ExecuteAsync(async () => await MergeAsync(job, pdfFactories).ConfigureAwait(false)).ConfigureAwait(false);
 
             mergedStream = mergeResult.MergedStream;
             disposableStreams.Add(mergedStream);
             job.PageCount = mergeResult.TotalPages;
 
+            archiveStream = new MemoryStream();
+            if (mergedStream.CanSeek)
+            {
+                mergedStream.Position = 0;
+            }
+            await mergedStream.CopyToAsync(archiveStream).ConfigureAwait(false);
+            archiveStream.Position = 0;
+            disposableStreams.Add(archiveStream);
+
+            if (!await EnsurePrinterSelectionAsync(job).ConfigureAwait(false))
+            {
+                _logger.LogInformation("Job {JobId} cancelled by user before printing.", job.JobId);
+                job.Status = JobStatus.Cancelled;
+                return;
+            }
+
             var printPolicy = CreateRetryPolicy(PrintJobStage.Print);
-            await printPolicy.ExecuteAsync(() => PrintAsync(job, mergedStream)).ConfigureAwait(false);
+            await printPolicy.ExecuteAsync(async () => await PrintAsync(job, mergedStream).ConfigureAwait(false)).ConfigureAwait(false);
 
             var archivePolicy = CreateRetryPolicy(PrintJobStage.Archive);
-            await archivePolicy.ExecuteAsync(() => ArchiveAsync(job, mergedStream)).ConfigureAwait(false);
+            await archivePolicy.ExecuteAsync(async () => await ArchiveAsync(job, archiveStream).ConfigureAwait(false)).ConfigureAwait(false);
         }
         finally
         {
@@ -169,7 +192,10 @@ public class PrintProcessorService : BackgroundService
             if (converter == null)
             {
                 _logger.LogWarning("File {FilePath} is not supported and will be moved to unsupported directory.", filePath);
-                _fileArchiver.MoveUnsupportedFile(filePath);
+                if (job.UnsupportedFilesMoved.Add(filePath))
+                {
+                    _fileArchiver.MoveUnsupportedFile(filePath);
+                }
                 continue;
             }
 
@@ -183,6 +209,10 @@ public class PrintProcessorService : BackgroundService
 
         if (factories.Count == 0)
         {
+            _logger.LogWarning("No supported files found for job {JobId}. Marking as failed.", job.JobId);
+            job.Status = JobStatus.Failed;
+            job.ErrorMessage = "没有可打印的文件。";
+            _trayIconService.UpdateStatus(_recentJobs.Values);
             throw new InvalidOperationException("No supported files were available for printing.");
         }
 
@@ -198,6 +228,42 @@ public class PrintProcessorService : BackgroundService
 
         _logger.LogInformation("Prepared {Count} PDF factories for job {JobId}.", factories.Count, job.JobId);
         return factories;
+    }
+
+    private async Task<bool> EnsurePrinterSelectionAsync(PrintJob job)
+    {
+        if (!string.IsNullOrWhiteSpace(job.SelectedPrinter) && job.Copies > 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var dialog = scope.ServiceProvider.GetRequiredService<PrinterSelectionForm>();
+
+            dialog.Initialize(
+                _appSettings.Printing.ExcludedPrinters,
+                job.SelectedPrinter,
+                job.Copies > 0 ? job.Copies : _appSettings.Printing.Windows.DefaultCopies);
+
+            var result = dialog.ShowDialog();
+
+            if (result != DialogResult.OK)
+            {
+                return false;
+            }
+
+            job.SelectedPrinter = dialog.SelectedPrinter;
+            job.Copies = Math.Max(1, dialog.PrintCopies);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to prompt for printer selection.");
+            throw;
+        }
     }
 
     private async Task<(Stream MergedStream, int TotalPages)> MergeAsync(PrintJob job, IReadOnlyList<Func<Task<Stream>>> pdfFactories)
@@ -224,7 +290,7 @@ public class PrintProcessorService : BackgroundService
         _trayIconService.ShowBalloonTip(2000, "打印完成", $"任务 {job.JobId} 已完成并归档。", ToolTipIcon.Info);
     }
 
-    private AsyncRetryPolicy<T> CreateRetryPolicy<T>(PrintJobStage stage)
+    private AsyncRetryPolicy CreateRetryPolicy(PrintJobStage stage)
     {
         return Policy
             .Handle<Exception>()
@@ -234,9 +300,8 @@ public class PrintProcessorService : BackgroundService
                 onRetry: (exception, timeSpan, attempt, _) =>
                 {
                     _logger.LogWarning(exception,
-                        "Stage {Stage} failed for job {JobId}. Retry attempt {Attempt} after {Delay} ms.",
+                        "Stage {Stage} failed. Retry attempt {Attempt} after {Delay} ms.",
                         stage,
-                        _currentJobId,
                         attempt,
                         timeSpan.TotalMilliseconds);
                 });

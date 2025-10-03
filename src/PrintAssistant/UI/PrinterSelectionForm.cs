@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Drawing.Printing;
 using System.Linq;
 using System.Windows.Forms;
@@ -21,58 +22,86 @@ public partial class PrinterSelectionForm : Form
     /// </summary>
     public int PrintCopies { get; private set; }
 
-    private readonly List<string> _excludedPrinters;
+    private List<string> _excludedPrinters = new();
+    private List<string> _availablePrinters = new();
 
-    /// <summary>
-    /// 初始化 PrinterSelectionForm 的新实例。
-    /// </summary>
-    /// <param name="excludedPrinters">不应向用户显示的打印机名称列表。</param>
-    public PrinterSelectionForm(List<string> excludedPrinters)
+    public PrinterSelectionForm()
     {
         InitializeComponent();
-        _excludedPrinters = excludedPrinters;
         TopMost = true;
+    }
+
+    public void Initialize(IEnumerable<string> excludedPrinters, string? currentPrinter, int currentCopies)
+    {
+        _excludedPrinters = excludedPrinters?.ToList() ?? new List<string>();
+        _availablePrinters = LoadAvailablePrinters();
+
+        BuildPrinterButtons(currentPrinter);
+        numCopies.Value = Math.Max(1, currentCopies);
     }
 
     private void PrinterSelectionForm_Load(object sender, EventArgs e)
     {
-        LoadPrinters();
+        if (_availablePrinters.Count == 0)
+        {
+            _availablePrinters = LoadAvailablePrinters();
+            BuildPrinterButtons(null);
+        }
     }
 
-    /// <summary>
-    /// 加载系统已安装的打印机列表，并过滤掉被排除的打印机。
-    /// </summary>
-    private void LoadPrinters()
+    private List<string> LoadAvailablePrinters()
     {
-        string defaultPrinter = new PrinterSettings().PrinterName;
+        return PrinterSettings.InstalledPrinters.Cast<string>()
+            .Where(p => !_excludedPrinters.Contains(p, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+    }
 
-        foreach (string printer in PrinterSettings.InstalledPrinters.Cast<string>())
+    private void BuildPrinterButtons(string? preferredPrinter)
+    {
+        printerFlowPanel.Controls.Clear();
+
+        if (_availablePrinters.Count == 0)
         {
-            if (!_excludedPrinters.Contains(printer, StringComparer.OrdinalIgnoreCase))
+            var label = new Label
             {
-                cmbPrinters.Items.Add(printer);
-            }
-        }
-
-        if (cmbPrinters.Items.Contains(defaultPrinter))
-        {
-            cmbPrinters.SelectedItem = defaultPrinter;
-        }
-        else if (cmbPrinters.Items.Count > 0)
-        {
-            cmbPrinters.SelectedIndex = 0;
-        }
-    }
-
-    private void btnOK_Click(object sender, EventArgs e)
-    {
-        if (cmbPrinters.SelectedItem == null)
-        {
-            MessageBox.Show("请选择一个打印机。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Text = "未检测到可用打印机",
+                AutoSize = true,
+                ForeColor = Color.DarkRed,
+                Padding = new Padding(5)
+            };
+            printerFlowPanel.Controls.Add(label);
             return;
         }
 
-        SelectedPrinter = cmbPrinters.SelectedItem.ToString();
+        string defaultPrinter = new PrinterSettings().PrinterName;
+        string? activePrinter = !string.IsNullOrWhiteSpace(preferredPrinter) && _availablePrinters.Contains(preferredPrinter)
+            ? preferredPrinter
+            : (_availablePrinters.Contains(defaultPrinter) ? defaultPrinter : _availablePrinters.First());
+
+        foreach (var printer in _availablePrinters)
+        {
+            var button = new Button
+            {
+                Text = printer,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(12, 6, 12, 6),
+                Margin = new Padding(6),
+                Tag = printer,
+                BackColor = string.Equals(printer, activePrinter, StringComparison.OrdinalIgnoreCase)
+                    ? Color.LightSteelBlue
+                    : SystemColors.Control,
+                FlatStyle = FlatStyle.Standard
+            };
+
+            button.Click += (_, _) => SelectPrinterAndClose(printer);
+            printerFlowPanel.Controls.Add(button);
+        }
+    }
+
+    private void SelectPrinterAndClose(string printer)
+    {
+        SelectedPrinter = printer;
         PrintCopies = (int)numCopies.Value;
         DialogResult = DialogResult.OK;
         Close();

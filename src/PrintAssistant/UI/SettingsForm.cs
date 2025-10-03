@@ -121,9 +121,9 @@ public partial class SettingsForm : Form
             writer.WriteStartObject();
             foreach (var property in root.EnumerateObject())
             {
-                if (property.NameEquals("AppSettings"))
+                if (property.NameEquals("ApplicationSettings"))
                 {
-                    writer.WritePropertyName("AppSettings");
+                    writer.WritePropertyName("ApplicationSettings");
                     newAppSettingsNode.WriteTo(writer);
                 }
                 else

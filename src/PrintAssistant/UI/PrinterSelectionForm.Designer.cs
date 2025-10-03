@@ -21,10 +21,9 @@ namespace PrintAssistant.UI
         private void InitializeComponent()
         {
             lblPrinter = new Label();
-            cmbPrinters = new ComboBox();
+            printerFlowPanel = new FlowLayoutPanel();
             lblCopies = new Label();
             numCopies = new NumericUpDown();
-            btnOK = new Button();
             btnCancel = new Button();
             ((System.ComponentModel.ISupportInitialize)numCopies).BeginInit();
             SuspendLayout();
@@ -32,25 +31,26 @@ namespace PrintAssistant.UI
             // lblPrinter
             // 
             lblPrinter.AutoSize = true;
-            lblPrinter.Location = new Point(28, 27);
+            lblPrinter.Location = new Point(20, 18);
             lblPrinter.Name = "lblPrinter";
             lblPrinter.Size = new Size(80, 17);
             lblPrinter.TabIndex = 0;
             lblPrinter.Text = "选择打印机:";
             // 
-            // cmbPrinters
+            // printerFlowPanel
             // 
-            cmbPrinters.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbPrinters.FormattingEnabled = true;
-            cmbPrinters.Location = new Point(114, 24);
-            cmbPrinters.Name = "cmbPrinters";
-            cmbPrinters.Size = new Size(288, 25);
-            cmbPrinters.TabIndex = 1;
+            printerFlowPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            printerFlowPanel.AutoScroll = true;
+            printerFlowPanel.BorderStyle = BorderStyle.FixedSingle;
+            printerFlowPanel.Location = new Point(23, 43);
+            printerFlowPanel.Name = "printerFlowPanel";
+            printerFlowPanel.Size = new Size(488, 180);
+            printerFlowPanel.TabIndex = 1;
             // 
             // lblCopies
             // 
             lblCopies.AutoSize = true;
-            lblCopies.Location = new Point(40, 70);
+            lblCopies.Location = new Point(23, 240);
             lblCopies.Name = "lblCopies";
             lblCopies.Size = new Size(68, 17);
             lblCopies.TabIndex = 2;
@@ -58,26 +58,17 @@ namespace PrintAssistant.UI
             // 
             // numCopies
             // 
-            numCopies.Location = new Point(114, 68);
+            numCopies.Location = new Point(97, 238);
             numCopies.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
             numCopies.Name = "numCopies";
             numCopies.Size = new Size(120, 23);
             numCopies.TabIndex = 3;
             numCopies.Value = new decimal(new int[] { 1, 0, 0, 0 });
             // 
-            // btnOK
-            // 
-            btnOK.Location = new Point(226, 115);
-            btnOK.Name = "btnOK";
-            btnOK.Size = new Size(85, 30);
-            btnOK.TabIndex = 4;
-            btnOK.Text = "确定";
-            btnOK.UseVisualStyleBackColor = true;
-            btnOK.Click += btnOK_Click;
-            // 
             // btnCancel
             // 
-            btnCancel.Location = new Point(317, 115);
+            btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            btnCancel.Location = new Point(426, 287);
             btnCancel.Name = "btnCancel";
             btnCancel.Size = new Size(85, 30);
             btnCancel.TabIndex = 5;
@@ -87,16 +78,14 @@ namespace PrintAssistant.UI
             // 
             // PrinterSelectionForm
             // 
-            AcceptButton = btnOK;
             AutoScaleDimensions = new SizeF(7F, 17F);
             AutoScaleMode = AutoScaleMode.Font;
             CancelButton = btnCancel;
-            ClientSize = new Size(434, 161);
+            ClientSize = new Size(534, 329);
             Controls.Add(btnCancel);
-            Controls.Add(btnOK);
             Controls.Add(numCopies);
             Controls.Add(lblCopies);
-            Controls.Add(cmbPrinters);
+            Controls.Add(printerFlowPanel);
             Controls.Add(lblPrinter);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -104,6 +93,7 @@ namespace PrintAssistant.UI
             Name = "PrinterSelectionForm";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "选择打印机";
+            TopMost = true;
             Load += PrinterSelectionForm_Load;
             ((System.ComponentModel.ISupportInitialize)numCopies).EndInit();
             ResumeLayout(false);
@@ -113,10 +103,9 @@ namespace PrintAssistant.UI
         #endregion
 
         private Label lblPrinter;
-        private ComboBox cmbPrinters;
+        private FlowLayoutPanel printerFlowPanel;
         private Label lblCopies;
         private NumericUpDown numCopies;
-        private Button btnOK;
         private Button btnCancel;
     }
 }

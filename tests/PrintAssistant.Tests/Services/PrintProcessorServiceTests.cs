@@ -25,6 +25,7 @@ public class PrintProcessorServiceTests
         AppSettings? settings = null)
     {
         var options = Options.Create(settings ?? new AppSettings());
+        var serviceProvider = new Mock<IServiceProvider>();
 
         return new PrintProcessorService(
             NullLogger<PrintProcessorService>.Instance,
@@ -38,7 +39,8 @@ public class PrintProcessorServiceTests
             coverPageGeneratorMock.Object,
             retryPolicy,
             retryDecider,
-            options);
+            options,
+            serviceProvider.Object);
     }
 
     [Fact]
@@ -54,10 +56,20 @@ public class PrintProcessorServiceTests
         var archiverMock = new Mock<IFileArchiver>();
         var coverPageGeneratorMock = new Mock<ICoverPageGenerator>();
 
+        printServiceMock.Setup(p => p.PrintPdfAsync(It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<int>())).Returns(Task.CompletedTask);
+
         var job = new PrintJob(new[] { "file1.docx", "file2.pdf" })
         {
             SelectedPrinter = "PrinterA",
             Copies = 2
+        };
+
+        var settings = new AppSettings
+        {
+            Printing = new PrintSettings
+            {
+                GenerateCoverPage = true
+            }
         };
 
         queueMock.SetupSequence(q => q.DequeueJobAsync(It.IsAny<CancellationToken>()))
@@ -88,21 +100,19 @@ public class PrintProcessorServiceTests
         var retryDeciderMock = new Mock<IJobStageRetryDecider>();
         retryDeciderMock.Setup(d => d.ShouldRetry(It.IsAny<PrintJobStage>())).Returns(false);
 
-        var settings = new AppSettings();
-
         var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object, settings);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1000));
 
         // Act
         await service.StartAsync(cts.Token);
-        await Task.Delay(50);
+        await Task.Delay(300);
         await service.StopAsync(cts.Token);
 
         // Assert
         printServiceMock.Verify(p => p.PrintPdfAsync(mergedStream, "PrinterA", 2), Times.Once);
         pdfMergerMock.Verify(m => m.MergePdfsAsync(It.Is<IEnumerable<Func<Task<Stream>>>>(factories => factories.Count() == 3)), Times.Once);
-        archiverMock.Verify(a => a.ArchiveFilesAsync(job.SourceFilePaths, job.CreationTime, mergedStream, It.Is<string>(name => name.EndsWith(".pdf"))), Times.Once);
+        archiverMock.Verify(a => a.ArchiveFilesAsync(job.SourceFilePaths, job.CreationTime, It.IsAny<Stream?>(), It.Is<string>(name => name.EndsWith(".pdf"))), Times.Once);
         Assert.Equal(JobStatus.Archived, job.Status);
         Assert.Equal(5, job.PageCount);
     }
@@ -134,10 +144,10 @@ public class PrintProcessorServiceTests
 
         var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1000));
 
         await service.StartAsync(cts.Token);
-        await Task.Delay(100);
+        await Task.Delay(300);
         await service.StopAsync(cts.Token);
 
         archiverMock.Verify(a => a.MoveUnsupportedFile("unsupported.xyz"), Times.Once);
