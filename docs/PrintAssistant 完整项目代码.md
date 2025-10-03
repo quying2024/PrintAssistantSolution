@@ -8,6 +8,7 @@ PrintAssistantSolution/
 │   └── PrintAssistant/  
 │       ├── PrintAssistant.csproj  
 │       ├── appsettings.json  
+│       ├── appsettings.Secret.json
 │       ├── Program.cs  
 │       │  
 │       ├── Assets/  
@@ -19,7 +20,8 @@ PrintAssistantSolution/
 │       │  
 │       ├── Core/  
 │       │   ├── PrintJob.cs  
-│       │   └── JobStatus.cs  
+│       │   ├── JobStatus.cs
+│       │   └── PrintJobStage.cs  
 │       │  
 │       ├── Services/  
 │       │   ├── Abstractions/  
@@ -28,9 +30,11 @@ PrintAssistantSolution/
 │       │   │   ├── IFileConverter.cs  
 │       │   │   ├── IFileConverterFactory.cs  
 │       │   │   ├── IFileMonitor.cs  
+│       │   │   ├── IJobStageRetryDecider.cs
 │       │   │   ├── IPdfMerger.cs  
 │       │   │   ├── IPrintQueue.cs  
 │       │   │   ├── IPrintService.cs  
+│       │   │   ├── IRetryPolicy.cs
 │       │   │   └── ITrayIconService.cs  
 │       │   │  
 │       │   ├── Converters/  
@@ -42,11 +46,16 @@ PrintAssistantSolution/
 │       │   ├── FileArchiver.cs  
 │       │   ├── FileConverterFactory.cs  
 │       │   ├── FileMonitorService.cs  
+│       │   ├── MockPrintService.cs
 │       │   ├── PdfMerger.cs  
 │       │   ├── PrintProcessorService.cs  
 │       │   ├── PrintQueueService.cs  
 │       │   ├── PrintService.cs  
-│       │   └── TrayIconService.cs  
+│       │   ├── Retry/
+│       │   │   ├── DefaultRetryPolicy.cs
+│       │   │   └── RetryContext.cs
+│       │   ├── TrayIconService.cs
+│       │   └── WindowsPrintService.cs  
 │       │  
 │       └── UI/  
 │           ├── PrinterSelectionForm.cs  
@@ -57,9 +66,14 @@ PrintAssistantSolution/
 └── tests/  
     └── PrintAssistant.Tests/  
         ├── PrintAssistant.Tests.csproj  
+        ├── Logging/
+        │   └── SerilogBootstrapTests.cs
         └── Services/  
+            ├── DocumentConversionIntegrationTests.cs
             ├── FileArchiverTests.cs  
-            └── FileMonitorServiceTests.cs
+            ├── FileConverterFactoryTests.cs
+            ├── FileMonitorServiceTests.cs
+            └── PrintProcessorServiceTests.cs
 
 ---
 
@@ -85,23 +99,28 @@ XML
   \</ItemGroup\>
 
   \<ItemGroup\>  
+    \<PackageReference Include\="Microsoft.Windows.Compatibility" Version\="8.0.1" /\>  
+    \<PackageReference Include\="Microsoft.Extensions.DependencyInjection.Abstractions" Version\="9.0.9" /\>  
     \<PackageReference Include\="Microsoft.Extensions.Hosting" Version\="8.0.0" /\>  
     \<PackageReference Include\="Serilog.Extensions.Hosting" Version\="8.0.0" /\>  
     \<PackageReference Include\="Serilog.Settings.Configuration" Version\="8.0.0" /\>  
     \<PackageReference Include\="Serilog.Sinks.File" Version\="5.0.0" /\>  
     \<PackageReference Include\="System.IO.Abstractions" Version\="20.0.15" /\>  
     \<PackageReference Include\="System.Threading.Tasks.Dataflow" Version\="8.0.0" /\>  
-    \<PackageReference Include\="Microsoft.Windows.Compatibility" Version\="8.0.1" />  
-    <PackageReference Include="Syncfusion.DocIO.Net.Core" Version="*" />  
-    <PackageReference Include="Syncfusion.DocIORenderer.Net.Core" Version="*" />  
-    <PackageReference Include="Syncfusion.Pdf.Net.Core" Version="*" />  
-    <PackageReference Include="Syncfusion.PdfToImageConverter.Net" Version="*" />  
-    <PackageReference Include="Syncfusion.XlsIO.Net.Core" Version="*" />  
-    <PackageReference Include="Syncfusion.XlsIORenderer.Net.Core" Version="*" />  
+    \<PackageReference Include\="Polly" Version\="7.2.4" /\>  
+    \<PackageReference Include\="Syncfusion.DocIO.Net.Core" Version\="*" /\>  
+    \<PackageReference Include\="Syncfusion.DocIORenderer.Net.Core" Version\="*" /\>  
+    \<PackageReference Include\="Syncfusion.Pdf.Net.Core" Version\="*" /\>  
+    \<PackageReference Include\="Syncfusion.PdfToImageConverter.Net" Version\="31.1.22" /\>  
+    \<PackageReference Include\="Syncfusion.XlsIO.Net.Core" Version\="*" /\>  
+    \<PackageReference Include\="Syncfusion.XlsIORenderer.Net.Core" Version\="*" /\>  
   \</ItemGroup\>
 
   \<ItemGroup\>  
     \<None Update\="appsettings.json"\>  
+      \<CopyToOutputDirectory\>PreserveNewest\</CopyToOutputDirectory\>  
+    \</None\>  
+    \<None Update\="appsettings.Secret.json"\>  
       \<CopyToOutputDirectory\>PreserveNewest\</CopyToOutputDirectory\>  
     \</None\>  
   \</ItemGroup\>
@@ -165,6 +184,22 @@ JSON
       "Path": "" // 留空则默认为 C:\\Users\\用户名\\AppData\\Local\\PrintAssistant\\Logs  
     }  
   }  
+}
+
+#### **appsettings.Secret.json**
+
+JSON
+
+{
+  "Syncfusion": {
+    "DocumentSdk": {
+      "LicenseKeys": [
+        "NxYtFisQPR08Cit/Vkd+XU9FcVRDX3xKf0x/TGpQb19xflBPallYVBYiSV9jS3tSdkViWX1bdXFVQmlYU091Xg==",
+        "@33312e302e303b33313bcSTC0Sw46H5Cgbb0gLWvt/h5UNhUr/wSLLQ9AtLwUfA="
+      ],
+      "Version": "31.x.x"
+    }
+  }
 }
 
 #### **Program.cs**
@@ -231,6 +266,13 @@ internal static class Program
         }
 
         services.AddSingleton<IPdfMerger, PdfMerger>();
+        services.AddSingleton<IRetryPolicy, DefaultRetryPolicy>();
+        services.AddSingleton<IJobStageRetryDecider, DefaultRetryPolicy>();
+        services.AddTransient<WordToPdfConverter>();
+        services.AddTransient<ExcelToPdfConverter>();
+        services.AddTransient<ImageToPdfConverter>();
+        services.AddTransient<SettingsForm>();
+        services.AddTransient<PrinterSelectionForm>();
         services.AddHostedService<PrintProcessorService>();
     }
 
@@ -300,6 +342,31 @@ public class PrintSettings
 {  
     public List\<string\> ExcludedPrinters { get; set; } \= new();  
     public bool GenerateCoverPage { get; set; } \= true;  
+    public bool UseMockPrintService { get; set; } \= true;
+    public PrintRetryPolicySettings RetryPolicy { get; set; } \= new();
+    public WindowsPrintSettings Windows { get; set; } \= new();
+}
+
+public class PrintRetryPolicySettings
+{
+    public int MaxRetryCount { get; set; } \= 3;
+    public int InitialDelayMilliseconds { get; set; } \= 1000;
+    public double BackoffFactor { get; set; } \= 2.0;
+    public int MaxDelayMilliseconds { get; set; } \= 30000;
+    public List\<string\> RetryOn { get; set; } \= new() { "Conversion", "Merge", "Print", "Archive" };
+}
+
+public class WindowsPrintSettings
+{
+    public string? DefaultPrinter { get; set; }
+    public int DefaultCopies { get; set; } \= 1;
+    public bool Duplex { get; set; } \= false;
+    public bool Collate { get; set; } \= true;
+    public string? PaperSource { get; set; }
+    public bool Landscape { get; set; } \= false;
+    public bool StretchToFit { get; set; } \= true;
+    public bool Color { get; set; } \= true;
+    public int Dpi { get; set; } \= 200;
 }
 
 public class ArchiveSettings  
@@ -363,6 +430,21 @@ public class PrintJob
     /// \</summary\>  
     public int Copies { get; set; }
 
+    /// \<summary\>  
+    /// 重试次数计数。  
+    /// \</summary\>  
+    public int AttemptCount { get; set; }
+
+    /// \<summary\>  
+    /// 最大重试次数。  
+    /// \</summary\>  
+    public int MaxRetryCount { get; set; }
+
+    /// \<summary\>  
+    /// 最后失败的阶段。  
+    /// \</summary\>  
+    public PrintJobStage? LastFailedStage { get; set; }
+
     public PrintJob(IEnumerable\<string\> sourceFilePaths)  
     {  
         JobId \= Guid.NewGuid();  
@@ -370,6 +452,8 @@ public class PrintJob
         SourceFilePaths \= sourceFilePaths.ToList().AsReadOnly();  
         Status \= JobStatus.Pending;  
         Copies \= 1; // 默认份数  
+        AttemptCount \= 0;
+        MaxRetryCount \= 3; // 默认最大重试次数
     }  
 }
 
@@ -392,6 +476,23 @@ public enum JobStatus
     Failed,       // 处理失败  
     Cancelled,    // 用户取消  
     Archived      // 文件已归档  
+}
+
+#### **Core/PrintJobStage.cs**
+
+C\#
+
+namespace PrintAssistant.Core;
+
+/// \<summary\>  
+/// 标识打印作业在处理流程中的阶段，用于异常处理与重试策略。  
+/// \</summary\>  
+public enum PrintJobStage  
+{  
+    Conversion,  
+    Merge,  
+    Print,  
+    Archive,  
 }
 
 #### **Services/Abstractions/ (所有接口)**
@@ -422,7 +523,7 @@ public interface IFileMonitor { event Action\<PrintJob\>? JobDetected; void Star
 
 // IPdfMerger.cs  
 namespace PrintAssistant.Services.Abstractions;  
-public interface IPdfMerger { Task\<(Stream MergedPdfStream, int TotalPages)\> MergePdfsAsync(IEnumerable\<Stream\> pdfStreams); }
+public interface IPdfMerger { Task\<(Stream MergedPdfStream, int TotalPages)\> MergePdfsAsync(IEnumerable\<Func\<Task\<Stream\>\>\> pdfFactories); }
 
 // IPrintQueue.cs  
 namespace PrintAssistant.Services.Abstractions;  
@@ -438,6 +539,15 @@ public interface IPrintService { Task PrintPdfAsync(Stream pdfStream, string pri
 namespace PrintAssistant.Services.Abstractions;  
 using PrintAssistant.Core;  
 public interface ITrayIconService { void UpdateStatus(IEnumerable\<PrintJob\> recentJobs); void ShowBalloonTip(int timeout, string tipTitle, string tipText, ToolTipIcon tipIcon); }
+
+// IRetryPolicy.cs  
+namespace PrintAssistant.Services.Abstractions;  
+public interface IRetryPolicy { TimeSpan? GetDelay(int attempt); }
+
+// IJobStageRetryDecider.cs  
+namespace PrintAssistant.Services.Abstractions;  
+using PrintAssistant.Core;  
+public interface IJobStageRetryDecider { bool ShouldRetry(PrintJobStage stage); }
 
 #### **Services/Converters/ (所有转换器)**
 
@@ -1430,6 +1540,283 @@ public class MockPrintService : IPrintService
 }
 ```
 
+#### **Services/WindowsPrintService.cs**
+
+C\#
+
+using System.Drawing;
+using System.Drawing.Printing;
+using System.IO;
+using System.Linq;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using PrintAssistant.Configuration;
+using PrintAssistant.Services.Abstractions;
+using Syncfusion.PdfToImageConverter;
+
+namespace PrintAssistant.Services;
+
+/// \<summary\>  
+/// Windows 平台打印服务实现，使用 Syncfusion.PdfToImageConverter 将 PDF 转换为图像并通过 GDI 打印。  
+/// \</summary\>  
+public class WindowsPrintService : IPrintService
+{
+    private readonly ILogger\<WindowsPrintService\> _logger;
+    private readonly WindowsPrintSettings _settings;
+
+    public WindowsPrintService(ILogger\<WindowsPrintService\> logger, IOptions\<AppSettings\> options)
+    {
+        _logger = logger;
+        _settings = options.Value.Printing.Windows;
+    }
+
+    public async Task PrintPdfAsync(Stream pdfStream, string printerName, int copies)
+    {
+        if (pdfStream == null)
+        {
+            throw new ArgumentNullException(nameof(pdfStream));
+        }
+
+        var targetPrinter = string.IsNullOrWhiteSpace(printerName)
+            ? _settings.DefaultPrinter
+            : printerName;
+
+        if (string.IsNullOrWhiteSpace(targetPrinter))
+        {
+            throw new InvalidOperationException("WindowsPrintService: 未指定打印机，请检查配置或用户输入。");
+        }
+
+        var effectiveCopies = copies \> 0 ? copies : Math.Max(1, _settings.DefaultCopies);
+
+        if (pdfStream.CanSeek)
+        {
+            pdfStream.Position = 0;
+        }
+
+        try
+        {
+            using var converter = new PdfToImageConverter();
+            converter.Load(pdfStream);
+
+            var pageCount = converter.PageCount;
+            if (pageCount \<= 0)
+            {
+                _logger.LogWarning("WindowsPrintService: 文档页数为 0，无法打印。打印机: {Printer}", targetPrinter);
+                return;
+            }
+
+            var rawStreams = converter.Convert(0, pageCount - 1, keepTransparency: false, isSkipAnnotations: false);
+            if (rawStreams == null || rawStreams.Length == 0)
+            {
+                _logger.LogWarning("WindowsPrintService: PDF 转换为空，跳过打印。打印机: {Printer}", targetPrinter);
+                return;
+            }
+
+            var imageStreams = new MemoryStream[rawStreams.Length];
+            for (var i = 0; i \< rawStreams.Length; i++)
+            {
+                if (rawStreams[i] == null)
+                {
+                    continue;
+                }
+
+                var memory = new MemoryStream();
+                rawStreams[i].Position = 0;
+                rawStreams[i].CopyTo(memory);
+                memory.Position = 0;
+                imageStreams[i] = memory;
+                rawStreams[i].Dispose();
+            }
+
+            using var printDocument = new PrintDocument
+            {
+                PrinterSettings = new PrinterSettings
+                {
+                    PrinterName = targetPrinter,
+                    Copies = (short)Math.Clamp(effectiveCopies, 1, short.MaxValue)
+                }
+            };
+
+            var paperSize = printDocument.PrinterSettings.PaperSizes
+                .Cast\<PaperSize?\>()
+                .FirstOrDefault(p =\> p?.Kind == PaperKind.A4);
+
+            if (paperSize == null)
+            {
+                paperSize = new PaperSize("A4", width: 827, height: 1169);
+            }
+
+            printDocument.DefaultPageSettings.PaperSize = paperSize;
+            printDocument.PrinterSettings.DefaultPageSettings.PaperSize = paperSize;
+
+            printDocument.PrintController = new StandardPrintController();
+
+            var totalPages = imageStreams.Length;
+            var currentPage = 0;
+
+            printDocument.PrintPage += (sender, e) =\>
+            {
+                if (currentPage \< totalPages && imageStreams[currentPage] != null)
+                {
+                    try
+                    {
+                        var stream = imageStreams[currentPage];
+                        if (stream.CanSeek)
+                        {
+                            stream.Position = 0;
+                        }
+
+                        using var image = Image.FromStream(stream, useEmbeddedColorManagement: true, validateImageData: true);
+                        DrawImage(e.Graphics!, image, e.MarginBounds);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "WindowsPrintService: 打印第 {Page} 页时发生错误。", currentPage + 1);
+                    }
+                    finally
+                    {
+                        imageStreams[currentPage]?.Dispose();
+                        imageStreams[currentPage] = null;
+                    }
+                }
+
+                currentPage++;
+                e.HasMorePages = currentPage \< totalPages;
+            };
+
+            await Task.Run(() =\> printDocument.Print()).ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "WindowsPrintService: 成功打印 PDF。打印机: {Printer}, 份数: {Copies}, 页数: {Pages}",
+                targetPrinter,
+                effectiveCopies,
+                totalPages);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WindowsPrintService: 打印过程中发生异常。");
+            throw;
+        }
+    }
+
+    private static void DrawImage(Graphics graphics, Image image, Rectangle targetBounds)
+    {
+        if (graphics == null || image == null)
+        {
+            return;
+        }
+
+        var scaleX = (float)targetBounds.Width / image.Width;
+        var scaleY = (float)targetBounds.Height / image.Height;
+        var scale = Math.Min(scaleX, scaleY);
+
+        var drawWidth = (int)(image.Width * scale);
+        var drawHeight = (int)(image.Height * scale);
+        var offsetX = targetBounds.X + (targetBounds.Width - drawWidth) / 2;
+        var offsetY = targetBounds.Y + (targetBounds.Height - drawHeight) / 2;
+
+        graphics.DrawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+    }
+}
+```
+
+#### **Services/Retry/DefaultRetryPolicy.cs**
+
+C\#
+
+using Microsoft.Extensions.Options;
+using PrintAssistant.Configuration;
+using PrintAssistant.Core;
+using PrintAssistant.Services.Abstractions;
+
+namespace PrintAssistant.Services.Retry;
+
+public class DefaultRetryPolicy : IRetryPolicy, IJobStageRetryDecider
+{
+    private readonly PrintRetryPolicySettings _settings;
+    private readonly HashSet\<PrintJobStage\> _retryStages;
+
+    public DefaultRetryPolicy(IOptions\<AppSettings\> options)
+    {
+        _settings = options.Value.Printing.RetryPolicy;
+        _retryStages = _settings.RetryOn
+            .Select(name =\> Enum.TryParse\<PrintJobStage\>(name, ignoreCase: true, out var stage) ? stage : (PrintJobStage?)null)
+            .Where(stage =\> stage.HasValue)
+            .Select(stage =\> stage!.Value)
+            .ToHashSet();
+    }
+
+    public TimeSpan? GetDelay(int attempt)
+    {
+        if (attempt \>= _settings.MaxRetryCount)
+        {
+            return null;
+        }
+
+        var delay = _settings.InitialDelayMilliseconds * Math.Pow(_settings.BackoffFactor, attempt);
+        delay = Math.Min(delay, _settings.MaxDelayMilliseconds);
+        return TimeSpan.FromMilliseconds(delay);
+    }
+
+    public bool ShouldRetry(PrintJobStage stage)
+    {
+        return _retryStages.Contains(stage);
+    }
+}
+```
+
+#### **Services/Retry/RetryContext.cs**
+
+C\#
+
+using PrintAssistant.Configuration;
+using PrintAssistant.Core;
+
+namespace PrintAssistant.Services.Retry;
+
+public sealed class RetryContext
+{
+    private readonly PrintRetryPolicySettings _settings;
+
+    public RetryContext(PrintJob job, PrintRetryPolicySettings settings)
+    {
+        Job = job;
+        _settings = settings;
+        Job.MaxRetryCount = settings.MaxRetryCount;
+    }
+
+    public PrintJob Job { get; }
+
+    public int Attempt =\> Job.AttemptCount;
+    public int MaxRetries { get; private set; }
+
+    public void Initialize(int maxRetries)
+    {
+        MaxRetries = maxRetries;
+        Job.MaxRetryCount = maxRetries;
+    }
+
+    public bool CanRetry(int currentAttempt)
+    {
+        return currentAttempt \< _settings.MaxRetryCount;
+    }
+
+    public void IncrementAttempt(PrintJobStage stage, string message)
+    {
+        Job.AttemptCount++;
+        Job.LastFailedStage = stage;
+        Job.ErrorMessage = message;
+    }
+
+    public void Reset()
+    {
+        Job.AttemptCount = 0;
+        Job.LastFailedStage = null;
+        Job.ErrorMessage = null;
+    }
+}
+```
+
 #### **UI/PrinterSelectionForm.cs**
 
 ```csharp
@@ -1832,4 +2219,883 @@ public class FileMonitorServiceTests
         Assert.Contains(detectedJob.SourceFilePaths, p \=\> p.EndsWith("file2.txt"));  
         Assert.Contains(detectedJob.SourceFilePaths, p \=\> p.EndsWith("file3.txt"));  
     }  
+}
+
+#### **Logging/SerilogBootstrapTests.cs**
+
+C\#
+
+using System;
+using System.IO;
+using Microsoft.Extensions.Configuration;
+using Serilog;
+using Xunit;
+
+namespace PrintAssistant.Tests.Logging;
+
+public class SerilogBootstrapTests
+{
+    \[Fact\]
+    public void Bootstrap\_ShouldCreateLogsDirectoryAndFile()
+    {
+        // Arrange
+        var baseDirectory = Path.Combine(Path.GetTempPath(), "PrintAssistantTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(baseDirectory);
+        var originalDirectory = Environment.CurrentDirectory;
+        Environment.CurrentDirectory = baseDirectory;
+
+        var configurationJson = "{\"Serilog\":{\"WriteTo\":[{\"Name\":\"File\",\"Args\":{\"path\":\"Logs\\\\log-.txt\",\"rollingInterval\":\"Day\"}}]}}";
+        var tempConfigPath = Path.Combine(baseDirectory, "appsettings.json");
+        File.WriteAllText(tempConfigPath, configurationJson);
+
+        var configuration = new ConfigurationManager();
+        configuration.AddJsonFile(tempConfigPath, optional: false, reloadOnChange: false);
+
+        Log.Logger = new LoggerConfiguration()
+            .ReadFrom.Configuration(configuration)
+            .CreateLogger();
+        Log.Information("Bootstrap test log entry.");
+        Log.CloseAndFlush();
+
+        // Assert
+        var logsPath = Path.Combine(baseDirectory, "Logs");
+        Assert.True(Directory.Exists(logsPath), "Logs directory should be created.");
+        var files = Directory.GetFiles(logsPath, "log-*.txt");
+        Assert.NotEmpty(files);
+        Assert.Contains(files, file \=\> new FileInfo(file).Length \> 0);
+
+        // Cleanup
+        Environment.CurrentDirectory = originalDirectory;
+        Directory.Delete(baseDirectory, recursive: true);
+    }
+}
+```
+
+#### **Services/DocumentConversionIntegrationTests.cs**
+
+C\#
+
+using System.Diagnostics;
+using Microsoft.Extensions.Configuration;
+using PrintAssistant.Services;
+using ImageToPdfConverter = PrintAssistant.Services.Converters.ImageToPdfConverter;
+using WordToPdfConverter = PrintAssistant.Services.Converters.WordToPdfConverter;
+using ExcelToPdfConverter = PrintAssistant.Services.Converters.ExcelToPdfConverter;
+using Syncfusion.DocIO;
+using Syncfusion.DocIO.DLS;
+using Syncfusion.DocIORenderer;
+using Syncfusion.Pdf;
+using Syncfusion.Pdf.Graphics;
+using Syncfusion.Pdf.Parsing;
+using Syncfusion.XlsIO;
+using Syncfusion.XlsIORenderer;
+using Xunit;
+using Xunit.Abstractions;
+using FileSystem = System.IO.Abstractions.FileSystem;
+
+namespace PrintAssistant.Tests.Services;
+
+public class DocumentConversionIntegrationTests : IDisposable
+{
+    private static bool _licenseRegistered;
+
+    private readonly string _workingDirectory;
+    private readonly ITestOutputHelper _output;
+    private readonly FileSystem _fileSystem = new();
+
+    public DocumentConversionIntegrationTests(ITestOutputHelper output)
+    {
+        _output = output;
+        _workingDirectory = Path.Combine(Path.GetTempPath(), "PrintAssistantConversionTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_workingDirectory);
+
+        RegisterSyncfusionLicense();
+    }
+
+    \[Fact\]
+    public async Task ConvertVariousDocuments\_ToPdfStreams\_AllValid()
+    {
+        var wordPath = CreateSampleWordDocument();
+        var excelPath = CreateSampleExcelWorkbook();
+        var imagePath = CreateSampleImage();
+
+        await using var wordPdf = await new WordToPdfConverter(_fileSystem).ConvertToPdfAsync(wordPath);
+        await using var excelPdf = await new ExcelToPdfConverter(_fileSystem).ConvertToPdfAsync(excelPath);
+        await using var imagePdf = await new ImageToPdfConverter(_fileSystem).ConvertToPdfAsync(imagePath);
+
+        var baseStreams = new List\<Stream\> { CloneStream(wordPdf), CloneStream(excelPdf), CloneStream(imagePdf) };
+        var pdfFactories = baseStreams
+            .Select\<Stream, Func\<Task\<Stream\>\>\>(stream \=\> () \=\> Task.FromResult\<Stream\>(CloneStream(stream)))
+            .ToList();
+
+        foreach (var pdfStream in baseStreams)
+        {
+            pdfStream.Position = 0;
+            using var loadedDocument = new PdfLoadedDocument(pdfStream);
+            Assert.True(loadedDocument.PageCount \>= 1);
+        }
+
+        var merger = new PdfMerger();
+        var (mergedStream, totalPages) = await merger.MergePdfsAsync(pdfFactories);
+
+        Assert.True(totalPages \>= baseStreams.Count);
+        using var mergedDocument = new PdfLoadedDocument(mergedStream);
+        Assert.Equal(totalPages, mergedDocument.PageCount);
+
+        mergedStream.Dispose();
+        foreach (var stream in baseStreams)
+        {
+            stream.Dispose();
+        }
+    }
+
+    \[Fact\]
+    public async Task PdfMerge\_PerformanceBaseline\_LogsMetrics()
+    {
+        const int documentCount = 20;
+
+        var pdfStreams = new List\<Stream\>();
+        for (var i = 0; i \< documentCount; i++)
+        {
+            pdfStreams.Add(await CreateSyntheticPdfStreamAsync($"Sample Document #{i + 1}"));
+        }
+
+        var pdfFactories = pdfStreams
+            .Select\<Stream, Func\<Task\<Stream\>\>\>(stream \=\> () \=\> Task.FromResult\<Stream\>(CloneStream(stream)))
+            .ToList();
+
+        var merger = new PdfMerger();
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        var memoryBefore = GC.GetTotalMemory(forceFullCollection: true);
+        var stopwatch = Stopwatch.StartNew();
+        var (mergedStream, totalPages) = await merger.MergePdfsAsync(pdfFactories);
+        stopwatch.Stop();
+        var memoryAfter = GC.GetTotalMemory(forceFullCollection: true);
+
+        using var mergedDocument = new PdfLoadedDocument(mergedStream);
+
+        Assert.True(totalPages \>= documentCount);
+        Assert.Equal(totalPages, mergedDocument.PageCount);
+
+        _output.WriteLine($"Merged {documentCount} PDFs into {totalPages} pages.");
+        _output.WriteLine($"Elapsed: {stopwatch.ElapsedMilliseconds} ms.");
+        _output.WriteLine($"Approx. memory delta: {(memoryAfter - memoryBefore) / 1024.0 / 1024.0:F2} MB.");
+
+        mergedStream.Dispose();
+        foreach (var stream in pdfStreams)
+        {
+            stream.Dispose();
+        }
+    }
+
+    private string CreateSampleWordDocument()
+    {
+        var filePath = Path.Combine(_workingDirectory, "sample.docx");
+
+        using var document = new WordDocument();
+        var section = document.AddSection();
+        var paragraph = section.AddParagraph();
+        paragraph.AppendText("PrintAssistant 文档转换端到端验证 - Word");
+
+        document.Save(filePath, FormatType.Docx);
+
+        return filePath;
+    }
+
+    private string CreateSampleExcelWorkbook()
+    {
+        var filePath = Path.Combine(_workingDirectory, "sample.xlsx");
+
+        using var excelEngine = new ExcelEngine();
+        var workbook = excelEngine.Excel.Workbooks.Create(1);
+        var sheet = workbook.Worksheets[0];
+        sheet.Range["A1"].Text = "PrintAssistant";
+        sheet.Range["A2"].Text = "文档转换端到端验证 - Excel";
+        sheet.Range["B2"].Number = 2025;
+
+        workbook.SaveAs(filePath);
+
+        return filePath;
+    }
+
+    private string CreateSampleImage()
+    {
+        var filePath = Path.Combine(_workingDirectory, "sample.png");
+
+        using var bitmap = new System.Drawing.Bitmap(400, 200);
+        using var graphics = System.Drawing.Graphics.FromImage(bitmap);
+        graphics.Clear(System.Drawing.Color.LightSteelBlue);
+        graphics.DrawString("PrintAssistant", new System.Drawing.Font("Arial", 24), System.Drawing.Brushes.Black, new System.Drawing.PointF(20, 60));
+        graphics.DrawString("文档转换端到端验证 - 图片", new System.Drawing.Font("Arial", 12), System.Drawing.Brushes.Black, new System.Drawing.PointF(20, 110));
+
+        bitmap.Save(filePath, System.Drawing.Imaging.ImageFormat.Png);
+
+        return filePath;
+    }
+
+    private async Task\<Stream\> CreateSyntheticPdfStreamAsync(string title)
+    {
+        using var document = new PdfDocument();
+        var page = document.Pages.Add();
+        var graphics = page.Graphics;
+
+        var headerFont = new PdfStandardFont(PdfFontFamily.Helvetica, 18, PdfFontStyle.Bold);
+        var bodyFont = new PdfStandardFont(PdfFontFamily.Helvetica, 12);
+
+        graphics.DrawString(title, headerFont, PdfBrushes.DarkBlue, new Syncfusion.Drawing.PointF(40, 40));
+        graphics.DrawString("生成时间: " + DateTime.Now.ToString("F"), bodyFont, PdfBrushes.Black, new Syncfusion.Drawing.PointF(40, 80));
+
+        var stream = new MemoryStream();
+        document.Save(stream);
+        await stream.FlushAsync().ConfigureAwait(false);
+        stream.Position = 0;
+        document.Close(true);
+
+        return stream;
+    }
+
+    private static Stream CloneStream(Stream source)
+    {
+        source.Position = 0;
+        var clone = new MemoryStream();
+        source.CopyTo(clone);
+        clone.Position = 0;
+        source.Position = 0;
+        return clone;
+    }
+
+    private static void RegisterSyncfusionLicense()
+    {
+        if (_licenseRegistered)
+        {
+            return;
+        }
+
+        var root = FindSolutionRoot();
+        if (root == null)
+        {
+            throw new InvalidOperationException("无法定位解决方案根目录以加载 Syncfusion 许可证。");
+        }
+
+        var configBuilder = new ConfigurationBuilder()
+            .SetBasePath(root)
+            .AddJsonFile(Path.Combine("src", "PrintAssistant", "appsettings.Secret.json"), optional: true, reloadOnChange: false);
+
+        var configuration = configBuilder.Build();
+        var licenseKeys = configuration.GetSection("Syncfusion:DocumentSdk:LicenseKeys").Get\<string[]\>() ?? Array.Empty\<string\>();
+
+        foreach (var key in licenseKeys)
+        {
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                Syncfusion.Licensing.SyncfusionLicenseProvider.RegisterLicense(key);
+            }
+        }
+
+        _licenseRegistered = true;
+    }
+
+    private static string? FindSolutionRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory != null && !directory.GetFiles("PrintAssistantSolution.sln").Any())
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName;
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_workingDirectory))
+            {
+                Directory.Delete(_workingDirectory, recursive: true);
+            }
+        }
+        catch
+        {
+            // 忽略清理异常，避免影响测试结果。
+        }
+    }
+}
+```
+
+#### **Services/FileConverterFactoryTests.cs**
+
+C\#
+
+using Moq;
+using PrintAssistant.Services;
+using PrintAssistant.Services.Abstractions;
+using PrintAssistant.Services.Converters;
+using System.Text;
+using Xunit;
+
+namespace PrintAssistant.Tests.Services;
+
+public class FileConverterFactoryTests
+{
+    private FileConverterFactory CreateFactory()
+    {
+        var serviceProviderMock = new Mock\<IServiceProvider\>();
+        serviceProviderMock
+            .Setup(sp \=\> sp.GetService(typeof(WordToPdfConverter)))
+            .Returns(Mock.Of\<IFileConverter\>());
+        serviceProviderMock
+            .Setup(sp \=\> sp.GetService(typeof(ExcelToPdfConverter)))
+            .Returns(Mock.Of\<IFileConverter\>());
+        serviceProviderMock
+            .Setup(sp \=\> sp.GetService(typeof(ImageToPdfConverter)))
+            .Returns(Mock.Of\<IFileConverter\>());
+
+        return new FileConverterFactory(serviceProviderMock.Object);
+    }
+
+    \[Theory\]
+    \[InlineData("sample.docx")\]
+    \[InlineData("document.DOC")\]
+    public void GetConverter\_ShouldReturnWordConverter(string fileName)
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter(fileName);
+        Assert.NotNull(converter);
+    }
+
+    \[Theory\]
+    \[InlineData("sheet.xls")\]
+    \[InlineData("sheet.xlsx")\]
+    \[InlineData("sheet.XLSM")\]
+    public void GetConverter\_ShouldReturnExcelConverter(string fileName)
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter(fileName);
+        Assert.NotNull(converter);
+    }
+
+    \[Theory\]
+    \[InlineData("image.jpg")\]
+    \[InlineData("image.PNG")\]
+    \[InlineData("image.bmp")\]
+    public void GetConverter\_ShouldReturnImageConverter(string fileName)
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter(fileName);
+        Assert.NotNull(converter);
+    }
+
+    \[Fact\]
+    public async Task GetConverter\_ShouldReturnPassthroughForPdf()
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter("already.pdf");
+        Assert.NotNull(converter);
+
+        var tempFile = Path.Combine(Path.GetTempPath(), $"PrintAssistantTest\_{Guid.NewGuid():N}.pdf");
+        var pdfBytes = Encoding.UTF8.GetBytes("%PDF-1.4\\n1 0 obj\\n<< /Type /Catalog >>\\nendobj\\ntrailer\\n<< /Root 1 0 R >>\\nstartxref\\n0\\n%%EOF");
+        await File.WriteAllBytesAsync(tempFile, pdfBytes);
+
+        try
+        {
+            await using var resultStream = await converter!.ConvertToPdfAsync(tempFile);
+            Assert.True(resultStream.Length \> 0);
+
+            resultStream.Position = 0;
+            using var memory = new MemoryStream();
+            await resultStream.CopyToAsync(memory);
+            Assert.Equal(pdfBytes, memory.ToArray());
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
+    \[Fact\]
+    public async Task PassthroughConverter\_ShouldHandleLargePdfFile()
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter("large.pdf");
+        Assert.NotNull(converter);
+
+        var tempFile = Path.Combine(Path.GetTempPath(), $"PrintAssistantTest\_{Guid.NewGuid():N}\_large.pdf");
+
+        await using (var fileStream = File.Create(tempFile))
+        {
+            var header = Encoding.ASCII.GetBytes("%PDF-1.4\\n");
+            await fileStream.WriteAsync(header);
+
+            var content = new byte[5 * 1024 * 1024];
+            Random.Shared.NextBytes(content);
+            await fileStream.WriteAsync(content);
+
+            var trailer = Encoding.ASCII.GetBytes("\\ntrailer\\n<< /Root 1 0 R >>\\nstartxref\\n0\\n%%EOF");
+            await fileStream.WriteAsync(trailer);
+        }
+
+        try
+        {
+            await using var resultStream = await converter!.ConvertToPdfAsync(tempFile);
+            Assert.Equal(new FileInfo(tempFile).Length, resultStream.Length);
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
+    \[Fact\]
+    public async Task PassthroughConverter\_ShouldThrowForMissingFile()
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter("missing.pdf");
+        Assert.NotNull(converter);
+
+        var missingPath = Path.Combine(Path.GetTempPath(), $"PrintAssistantTest\_{Guid.NewGuid():N}\_missing.pdf");
+
+        var exception = await Assert.ThrowsAsync\<FileNotFoundException\>(() \=\> converter!.ConvertToPdfAsync(missingPath));
+        Assert.Contains(Path.GetFileName(missingPath), exception.FileName ?? string.Empty);
+    }
+
+    \[Fact\]
+    public async Task PassthroughConverter\_ShouldThrowForInvalidPdf()
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter("invalid.pdf");
+        Assert.NotNull(converter);
+
+        var tempFile = Path.Combine(Path.GetTempPath(), $"PrintAssistantTest\_{Guid.NewGuid():N}\_invalid.pdf");
+        await File.WriteAllTextAsync(tempFile, "Not a PDF file");
+
+        try
+        {
+            await using var stream = await converter!.ConvertToPdfAsync(tempFile);
+            Assert.True(stream.Length \> 0);
+
+            stream.Position = 0;
+            using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
+            var content = await reader.ReadToEndAsync();
+            Assert.Equal("Not a PDF file", content);
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
+    \[Fact\]
+    public void GetConverter\_ShouldReturnNullForUnsupported()
+    {
+        var factory = CreateFactory();
+        var converter = factory.GetConverter("unsupported.xyz");
+        Assert.Null(converter);
+    }
+}
+```
+
+#### **Services/PrintProcessorServiceTests.cs**
+
+C\#
+
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
+using PrintAssistant.Configuration;
+using PrintAssistant.Core;
+using PrintAssistant.Services;
+using PrintAssistant.Services.Abstractions;
+using Xunit;
+
+namespace PrintAssistant.Tests.Services;
+
+public class PrintProcessorServiceTests
+{
+    private static PrintProcessorService CreateService(
+        Mock\<IPrintQueue\> queueMock,
+        Mock\<IPrintService\> printServiceMock,
+        Mock\<IFileMonitor\> fileMonitorMock,
+        Mock\<ITrayIconService\> trayIconMock,
+        Mock\<IFileConverterFactory\> converterFactoryMock,
+        Mock\<IPdfMerger\> pdfMergerMock,
+        Mock\<IFileArchiver\> archiverMock,
+        Mock\<ICoverPageGenerator\> coverPageGeneratorMock,
+        IRetryPolicy retryPolicy,
+        IJobStageRetryDecider retryDecider,
+        IServiceProvider serviceProvider,
+        AppSettings? settings = null)
+    {
+        var options = Options.Create(settings ?? new AppSettings());
+
+        return new PrintProcessorService(
+            NullLogger\<PrintProcessorService\>.Instance,
+            queueMock.Object,
+            fileMonitorMock.Object,
+            trayIconMock.Object,
+            printServiceMock.Object,
+            converterFactoryMock.Object,
+            pdfMergerMock.Object,
+            archiverMock.Object,
+            coverPageGeneratorMock.Object,
+            retryPolicy,
+            retryDecider,
+            options,
+            serviceProvider);
+    }
+
+    \[Fact\]
+    public async Task ProcessJob\_ShouldConvertMergePrintAndArchive()
+    {
+        // Arrange
+        var queueMock = new Mock\<IPrintQueue\>();
+        var printServiceMock = new Mock\<IPrintService\>();
+        var fileMonitorMock = new Mock\<IFileMonitor\>();
+        var trayIconMock = new Mock\<ITrayIconService\>();
+        var converterFactoryMock = new Mock\<IFileConverterFactory\>();
+        var pdfMergerMock = new Mock\<IPdfMerger\>();
+        var archiverMock = new Mock\<IFileArchiver\>();
+        var coverPageGeneratorMock = new Mock\<ICoverPageGenerator\>();
+        var retryPolicyMock = new Mock\<IRetryPolicy\>();
+        var retryDeciderMock = new Mock\<IJobStageRetryDecider\>();
+        var serviceProviderMock = new Mock\<IServiceProvider\>();
+
+        var job = new PrintJob(new[] { "test.docx" });
+        var mockConverter = new Mock\<IFileConverter\>();
+        var mockPdfStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("Mock PDF content"));
+        var mockMergedStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("Mock merged PDF content"));
+        var mockCoverPageStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("Mock cover page content"));
+
+        converterFactoryMock.Setup(f \=\> f.GetConverter("test.docx")).Returns(mockConverter.Object);
+        mockConverter.Setup(c \=\> c.ConvertToPdfAsync("test.docx")).ReturnsAsync(mockPdfStream);
+        coverPageGeneratorMock.Setup(g \=\> g.GenerateCoverPageAsync(job)).ReturnsAsync(mockCoverPageStream);
+        
+        pdfMergerMock.Setup(m \=\> m.MergePdfsAsync(It.IsAny\<IEnumerable\<Func\<Task\<Stream\>\>\>\>()))
+            .ReturnsAsync((mockMergedStream, 2));
+        
+        printServiceMock.Setup(p \=\> p.PrintPdfAsync(It.IsAny\<Stream\>(), It.IsAny\<string\>(), It.IsAny\<int\>()))
+            .Returns(Task.CompletedTask);
+        
+        archiverMock.Setup(a \=\> a.ArchiveFilesAsync(It.IsAny\<IEnumerable\<string\>\>(), It.IsAny\<DateTime\>(), It.IsAny\<Stream\>(), It.IsAny\<string\>()))
+            .ReturnsAsync("archived/path");
+
+        serviceProviderMock.Setup(s \=\> s.GetService(typeof(PrintAssistant.UI.PrinterSelectionForm)))
+            .Returns(new PrintAssistant.UI.PrinterSelectionForm());
+
+        var settings = new AppSettings
+        {
+            Printing = new PrintSettings { GenerateCoverPage = true }
+        };
+
+        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object, serviceProviderMock.Object, settings);
+
+        // Act
+        await service.ProcessJobAsync(job);
+
+        // Assert
+        converterFactoryMock.Verify(f \=\> f.GetConverter("test.docx"), Times.Once);
+        mockConverter.Verify(c \=\> c.ConvertToPdfAsync("test.docx"), Times.Once);
+        coverPageGeneratorMock.Verify(g \=\> g.GenerateCoverPageAsync(job), Times.Once);
+        pdfMergerMock.Verify(m \=\> m.MergePdfsAsync(It.IsAny\<IEnumerable\<Func\<Task\<Stream\>\>\>\>()), Times.Once);
+        printServiceMock.Verify(p \=\> p.PrintPdfAsync(It.IsAny\<Stream\>(), It.IsAny\<string\>(), It.IsAny\<int\>()), Times.Once);
+        archiverMock.Verify(a \=\> a.ArchiveFilesAsync(It.IsAny\<IEnumerable\<string\>\>(), It.IsAny\<DateTime\>(), It.IsAny\<Stream\>(), It.IsAny\<string\>()), Times.Once);
+    }
 }  
+
+## 新增文件：UI服务架构
+
+### src/PrintAssistant/Services/Abstractions/IUIService.cs
+
+```csharp
+using PrintAssistant.Core;
+
+namespace PrintAssistant.Services.Abstractions;
+
+/// <summary>
+/// 提供在主UI线程上执行操作的服务。
+/// </summary>
+public interface IUIService
+{
+    /// <summary>
+    /// 在主UI线程上异步显示打印机选择对话框。
+    /// </summary>
+    /// <param name="job">当前的打印任务。</param>
+    /// <returns>一个表示对话框结果的任务，如果用户确认则为 true。</returns>
+    Task<bool> ShowPrinterSelectionDialogAsync(PrintJob job);
+}
+```
+
+### src/PrintAssistant/Services/UIService.cs
+
+```csharp
+using Microsoft.Extensions.Options;
+using PrintAssistant.Configuration;
+using PrintAssistant.Core;
+using PrintAssistant.Services.Abstractions;
+using PrintAssistant.UI;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+namespace PrintAssistant.Services;
+
+/// <summary>
+/// UI服务的实现，负责在正确的UI线程上创建和显示窗体。
+/// </summary>
+public class UIService : IUIService, IDisposable
+{
+    private readonly IOptions<AppSettings> _appSettings;
+    private readonly Control _invoker; // 一个隐藏的控件，用于访问UI线程
+
+    public UIService(IOptions<AppSettings> appSettings)
+    {
+        _appSettings = appSettings;
+        // 创建一个隐藏的控件，它的句柄将在主UI线程上创建。
+        // 我们用它来安全地调用Invoke。
+        _invoker = new Control();
+        _invoker.CreateControl();
+    }
+
+    public Task<bool> ShowPrinterSelectionDialogAsync(PrintJob job)
+    {
+        // 使用 TaskCompletionSource 在后台线程中等待UI线程的结果
+        var tcs = new TaskCompletionSource<bool>();
+
+        // 将显示对话框的操作封送到主UI线程执行
+        _invoker.Invoke(() =>
+        {
+            try
+            {
+                // Pass excluded printers to the dialog constructor
+                using var dialog = new PrinterSelectionForm(_appSettings.Value.Printing.ExcludedPrinters);
+
+                // Initialize the dialog with current job settings
+                dialog.Initialize(
+                    _appSettings.Value.Printing.ExcludedPrinters, // Pass excluded printers again for consistency
+                    job.SelectedPrinter,
+                    job.Copies > 0 ? job.Copies : _appSettings.Value.Printing.Windows.DefaultCopies);
+
+                // 关键步骤：将隐藏的控件作为对话框的所有者
+                // 这能极大地提高置顶的成功率
+                var result = dialog.ShowDialog(_invoker);
+
+                if (result == DialogResult.OK)
+                {
+                    job.SelectedPrinter = dialog.SelectedPrinter;
+                    job.Copies = dialog.PrintCopies;
+                    tcs.SetResult(true);
+                }
+                else
+                {
+                    tcs.SetResult(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+        });
+
+        return tcs.Task;
+    }
+
+    public void Dispose()
+    {
+        _invoker.Dispose();
+    }
+}
+```
+
+## 更新文件：Program.cs 服务注册
+
+在 `src/PrintAssistant/Program.cs` 的 `ConfigureServices` 方法中添加：
+
+```csharp
+// ... existing service registrations ...
+services.AddSingleton<IJobStageRetryDecider, DefaultRetryPolicy>();
+services.AddSingleton<IUIService, UIService>(); // 新增UI服务注册
+
+services.AddTransient<WordToPdfConverter>();
+// ... rest of the file ...
+```
+
+## 更新文件：PrintProcessorService.cs
+
+在 `src/PrintAssistant/Services/PrintProcessorService.cs` 中的主要变更：
+
+### 构造函数更新
+```csharp
+private readonly IUIService _uiService; // 新增字段
+private readonly AppSettings _appSettings;
+
+public PrintProcessorService(
+    ILogger<PrintProcessorService> logger,
+    IPrintQueue printQueue,
+    IFileMonitor fileMonitor,
+    ITrayIconService trayIconService,
+    IPrintService printService,
+    IFileConverterFactory fileConverterFactory,
+    IPdfMerger pdfMerger,
+    IFileArchiver fileArchiver,
+    ICoverPageGenerator coverPageGenerator,
+    PrintAssistant.Services.Abstractions.IRetryPolicy retryPolicy,
+    IJobStageRetryDecider retryDecider,
+    IUIService uiService, // 新增参数
+    IOptions<AppSettings> appSettings)
+{
+    _logger = logger;
+    _printQueue = printQueue;
+    _fileMonitor = fileMonitor;
+    _trayIconService = trayIconService;
+    _printService = printService;
+    _fileConverterFactory = fileConverterFactory;
+    _pdfMerger = pdfMerger;
+    _fileArchiver = fileArchiver;
+    _coverPageGenerator = coverPageGenerator;
+    _retryPolicy = retryPolicy;
+    _retryDecider = retryDecider;
+    _uiService = uiService; // 赋值
+    _appSettings = appSettings.Value;
+
+    _fileMonitor.JobDetected += OnJobDetected;
+}
+```
+
+### EnsurePrinterSelectionAsync 方法更新
+```csharp
+private async Task<bool> EnsurePrinterSelectionAsync(PrintJob job)
+{
+    if (!string.IsNullOrWhiteSpace(job.SelectedPrinter) && job.Copies > 0)
+    {
+        return true;
+    }
+
+    try
+    {
+        _logger.LogInformation("作业 {JobId}: 等待用户选择打印机。", job.JobId);
+        bool userConfirmed = await _uiService.ShowPrinterSelectionDialogAsync(job);
+
+        if (!userConfirmed)
+        {
+            _logger.LogInformation("作业 {JobId}: 用户取消了打印。", job.JobId);
+            return false;
+        }
+
+        return true;
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Failed to prompt for printer selection.");
+        throw;
+    }
+}
+```
+
+## 更新文件：PrinterSelectionForm.cs
+
+在 `src/PrintAssistant/UI/PrinterSelectionForm.cs` 中的主要变更：
+
+### 构造函数更新
+```csharp
+private List<string> _excludedPrinters = new(); // 在类级别初始化
+private List<string> _availablePrinters = new();
+
+public PrinterSelectionForm(IEnumerable<string> excludedPrinters) // 修改构造函数
+{
+    InitializeComponent();
+    _excludedPrinters = excludedPrinters?.ToList() ?? new List<string>(); // 初始化_excludedPrinters
+}
+```
+
+### 移除冗余的置顶代码
+移除了以下方法中的置顶相关代码：
+- 构造函数中的 `TopMost = true; BringToFront(); Activate();`
+- `PrinterSelectionForm_Load` 中的置顶代码
+- 删除了 `PrinterSelectionForm_Shown` 事件处理器
+- 删除了 `SetVisibleCore` 重写方法
+
+## 更新文件：PrinterSelectionForm.Designer.cs
+
+在 `src/PrintAssistant/UI/PrinterSelectionForm.Designer.cs` 中移除：
+
+```csharp
+// 移除这行：
+// Shown += PrinterSelectionForm_Shown;
+```
+
+## 更新文件：PrintProcessorServiceTests.cs
+
+在 `tests/PrintAssistant.Tests/Services/PrintProcessorServiceTests.cs` 中的测试更新：
+
+### CreateService 方法更新
+```csharp
+private static PrintProcessorService CreateService(
+    Mock<IPrintQueue> queueMock,
+    Mock<IPrintService> printServiceMock,
+    Mock<IFileMonitor> fileMonitorMock,
+    Mock<ITrayIconService> trayIconMock,
+    Mock<IFileConverterFactory> converterFactoryMock,
+    Mock<IPdfMerger> pdfMergerMock,
+    Mock<IFileArchiver> archiverMock,
+    Mock<ICoverPageGenerator> coverPageGeneratorMock,
+    IRetryPolicy retryPolicy,
+    IJobStageRetryDecider retryDecider,
+    Mock<IUIService> uiServiceMock, // 新增参数
+    AppSettings? settings = null)
+{
+    var options = Options.Create(settings ?? new AppSettings());
+
+    return new PrintProcessorService(
+        NullLogger<PrintProcessorService>.Instance,
+        queueMock.Object,
+        fileMonitorMock.Object,
+        trayIconMock.Object,
+        printServiceMock.Object,
+        converterFactoryMock.Object,
+        pdfMergerMock.Object,
+        archiverMock.Object,
+        coverPageGeneratorMock.Object,
+        retryPolicy,
+        retryDecider,
+        uiServiceMock.Object, // 传递mock对象
+        options);
+}
+```
+
+### 测试方法更新
+```csharp
+[Fact]
+public async Task ProcessJob_ShouldConvertMergePrintAndArchive()
+{
+    // ... existing mocks ...
+    var uiServiceMock = new Mock<IUIService>();
+    uiServiceMock.Setup(u => u.ShowPrinterSelectionDialogAsync(It.IsAny<PrintJob>()))
+        .ReturnsAsync(true); // 假设用户确认打印机选择
+
+    var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object, uiServiceMock, settings);
+    // ... rest of the test ...
+}
+```
+
+## 架构优势总结
+
+1. **线程安全**: 所有UI操作在主UI线程上执行
+2. **窗口置顶**: 通过窗口所有权机制确保对话框置顶
+3. **可测试性**: UI逻辑与业务逻辑分离，便于单元测试
+4. **可维护性**: 符合单一职责原则，代码结构清晰
+5. **可扩展性**: 可以轻松添加新的UI服务方法
+
+这次架构优化不仅解决了窗口置顶问题，更重要的是建立了一个可扩展、可测试、可维护的UI服务架构。

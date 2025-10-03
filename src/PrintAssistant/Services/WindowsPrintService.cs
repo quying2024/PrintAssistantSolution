@@ -66,7 +66,7 @@ public class WindowsPrintService : IPrintService
                 return;
             }
 
-            var imageStreams = new MemoryStream[rawStreams.Length];
+            var imageStreams = new MemoryStream?[rawStreams.Length];
             for (var i = 0; i < rawStreams.Length; i++)
             {
                 if (rawStreams[i] == null)
@@ -114,7 +114,8 @@ public class WindowsPrintService : IPrintService
                 {
                     try
                     {
-                        var stream = imageStreams[currentPage];
+                        var stream = imageStreams[currentPage]!;
+
                         if (stream.CanSeek)
                         {
                             stream.Position = 0;

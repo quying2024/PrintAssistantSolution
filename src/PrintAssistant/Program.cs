@@ -107,6 +107,7 @@ public static class Program
         services.AddSingleton<ICoverPageGenerator, CoverPageGenerator>();
         services.AddSingleton<IRetryPolicy, DefaultRetryPolicy>();
         services.AddSingleton<IJobStageRetryDecider, DefaultRetryPolicy>();
+        services.AddSingleton<IUIService, UIService>();
 
         services.AddTransient<WordToPdfConverter>();
         services.AddTransient<ExcelToPdfConverter>();

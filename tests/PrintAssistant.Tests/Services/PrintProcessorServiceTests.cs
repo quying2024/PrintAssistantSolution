@@ -22,10 +22,10 @@ public class PrintProcessorServiceTests
         Mock<ICoverPageGenerator> coverPageGeneratorMock,
         IRetryPolicy retryPolicy,
         IJobStageRetryDecider retryDecider,
+        Mock<IUIService> uiServiceMock,
         AppSettings? settings = null)
     {
         var options = Options.Create(settings ?? new AppSettings());
-        var serviceProvider = new Mock<IServiceProvider>();
 
         return new PrintProcessorService(
             NullLogger<PrintProcessorService>.Instance,
@@ -39,8 +39,8 @@ public class PrintProcessorServiceTests
             coverPageGeneratorMock.Object,
             retryPolicy,
             retryDecider,
-            options,
-            serviceProvider.Object);
+            uiServiceMock.Object,
+            options);
     }
 
     [Fact]
@@ -99,8 +99,11 @@ public class PrintProcessorServiceTests
         retryPolicyMock.Setup(p => p.GetDelay(It.IsAny<int>())).Returns((TimeSpan?)null);
         var retryDeciderMock = new Mock<IJobStageRetryDecider>();
         retryDeciderMock.Setup(d => d.ShouldRetry(It.IsAny<PrintJobStage>())).Returns(false);
+        var uiServiceMock = new Mock<IUIService>();
+        uiServiceMock.Setup(u => u.ShowPrinterSelectionDialogAsync(It.IsAny<PrintJob>()))
+            .ReturnsAsync(true);
 
-        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object, settings);
+        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object, uiServiceMock, settings);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1000));
 
@@ -141,8 +144,11 @@ public class PrintProcessorServiceTests
         retryPolicyMock.Setup(p => p.GetDelay(It.IsAny<int>())).Returns((TimeSpan?)null);
         var retryDeciderMock = new Mock<IJobStageRetryDecider>();
         retryDeciderMock.Setup(d => d.ShouldRetry(It.IsAny<PrintJobStage>())).Returns(false);
+        var uiServiceMock = new Mock<IUIService>();
+        uiServiceMock.Setup(u => u.ShowPrinterSelectionDialogAsync(It.IsAny<PrintJob>()))
+            .ReturnsAsync(true);
 
-        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object);
+        var service = CreateService(queueMock, printServiceMock, fileMonitorMock, trayIconMock, converterFactoryMock, pdfMergerMock, archiverMock, coverPageGeneratorMock, retryPolicyMock.Object, retryDeciderMock.Object, uiServiceMock);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1000));
 

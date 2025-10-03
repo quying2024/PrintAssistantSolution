@@ -28,7 +28,6 @@ public partial class PrinterSelectionForm : Form
     public PrinterSelectionForm()
     {
         InitializeComponent();
-        TopMost = true;
     }
 
     public void Initialize(IEnumerable<string> excludedPrinters, string? currentPrinter, int currentCopies)

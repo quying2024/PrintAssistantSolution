@@ -6,7 +6,6 @@ using System.Windows.Forms;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.DependencyInjection;
 using Polly;
 using Polly.Retry;
 using PrintAssistant.Configuration;
@@ -30,7 +29,7 @@ public class PrintProcessorService : BackgroundService
     private readonly ICoverPageGenerator _coverPageGenerator;
     private readonly PrintAssistant.Services.Abstractions.IRetryPolicy _retryPolicy;
     private readonly IJobStageRetryDecider _retryDecider;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IUIService _uiService;
     private readonly AppSettings _appSettings;
 
     private readonly ConcurrentDictionary<Guid, PrintJob> _recentJobs = new();
@@ -47,8 +46,8 @@ public class PrintProcessorService : BackgroundService
         ICoverPageGenerator coverPageGenerator,
         PrintAssistant.Services.Abstractions.IRetryPolicy retryPolicy,
         IJobStageRetryDecider retryDecider,
-        IOptions<AppSettings> appSettings,
-        IServiceProvider serviceProvider)
+        IUIService uiService,
+        IOptions<AppSettings> appSettings)
     {
         _logger = logger;
         _printQueue = printQueue;
@@ -61,8 +60,8 @@ public class PrintProcessorService : BackgroundService
         _coverPageGenerator = coverPageGenerator;
         _retryPolicy = retryPolicy;
         _retryDecider = retryDecider;
+        _uiService = uiService;
         _appSettings = appSettings.Value;
-        _serviceProvider = serviceProvider;
 
         _fileMonitor.JobDetected += OnJobDetected;
     }
@@ -180,7 +179,9 @@ public class PrintProcessorService : BackgroundService
         }
     }
 
+#pragma warning disable CS1998
     private async Task<List<Func<Task<Stream>>>> ConvertSourcesAsync(PrintJob job, List<Stream> disposableStreams, CancellationToken cancellationToken)
+#pragma warning restore CS1998
     {
         var factories = new List<Func<Task<Stream>>>();
 
@@ -230,7 +231,9 @@ public class PrintProcessorService : BackgroundService
         return factories;
     }
 
+#pragma warning disable CS1998
     private async Task<bool> EnsurePrinterSelectionAsync(PrintJob job)
+#pragma warning restore CS1998
     {
         if (!string.IsNullOrWhiteSpace(job.SelectedPrinter) && job.Copies > 0)
         {
@@ -239,23 +242,14 @@ public class PrintProcessorService : BackgroundService
 
         try
         {
-            using var scope = _serviceProvider.CreateScope();
-            var dialog = scope.ServiceProvider.GetRequiredService<PrinterSelectionForm>();
+            _logger.LogInformation("作业 {JobId}: 等待用户选择打印机。", job.JobId);
+            bool userConfirmed = await _uiService.ShowPrinterSelectionDialogAsync(job);
 
-            dialog.Initialize(
-                _appSettings.Printing.ExcludedPrinters,
-                job.SelectedPrinter,
-                job.Copies > 0 ? job.Copies : _appSettings.Printing.Windows.DefaultCopies);
-
-            var result = dialog.ShowDialog();
-
-            if (result != DialogResult.OK)
+            if (!userConfirmed)
             {
+                _logger.LogInformation("作业 {JobId}: 用户取消了打印。", job.JobId);
                 return false;
             }
-
-            job.SelectedPrinter = dialog.SelectedPrinter;
-            job.Copies = Math.Max(1, dialog.PrintCopies);
 
             return true;
         }
